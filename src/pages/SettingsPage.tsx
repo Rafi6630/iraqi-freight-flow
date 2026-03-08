@@ -86,10 +86,7 @@ export default function SettingsPage() {
           </div>
           <Button>Save Preferences</Button>
         </TabsContent>
-        <TabsContent value="exchange" className="erp-metric-card space-y-4">
-          <h3 className="text-lg font-semibold">Exchange Rate Settings</h3>
-          <p className="text-sm text-muted-foreground">Same as Exchange Offices page — manage FX rates here.</p>
-        </TabsContent>
+        <TabsContent value="exchange"><ExchangeRateSettingsTab /></TabsContent>
         <TabsContent value="payment-methods"><PaymentMethodsTab /></TabsContent>
       </Tabs>
     </div>
@@ -185,7 +182,7 @@ function PaymentMethodsTab() {
   const deleteMethod = useDeleteMutation('payment_methods');
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({
-    method_type: 'bank_transfer', bank_name: '', account_holder_name: '',
+    method_type: 'Bank Transfer', bank_name: '', account_holder_name: '',
     account_number: '', iban: '', swift_code: '', routing_number: '',
     currency: 'USD', is_default: false, notes: '',
   });
@@ -194,7 +191,7 @@ function PaymentMethodsTab() {
   const handleSave = async () => {
     await insertMethod.mutateAsync(form);
     setOpen(false);
-    setForm({ method_type: 'bank_transfer', bank_name: '', account_holder_name: '', account_number: '', iban: '', swift_code: '', routing_number: '', currency: 'USD', is_default: false, notes: '' });
+    setForm({ method_type: 'Bank Transfer', bank_name: '', account_holder_name: '', account_number: '', iban: '', swift_code: '', routing_number: '', currency: 'USD', is_default: false, notes: '' });
   };
 
   if (isLoading) return <div className="erp-metric-card p-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto" /></div>;
@@ -212,10 +209,14 @@ function PaymentMethodsTab() {
                 <Select value={form.method_type} onValueChange={v => set('method_type', v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                    <SelectItem value="cash">Cash</SelectItem>
-                    <SelectItem value="check">Check</SelectItem>
-                    <SelectItem value="mobile_payment">Mobile Payment</SelectItem>
+                    <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                    <SelectItem value="Cash">Cash</SelectItem>
+                    <SelectItem value="Check">Check</SelectItem>
+                    <SelectItem value="Hawala">Hawala (Exchange Office)</SelectItem>
+                    <SelectItem value="Mobile Payment">Mobile Payment</SelectItem>
+                    <SelectItem value="Wire Transfer">Wire Transfer</SelectItem>
+                    <SelectItem value="Credit Card">Credit Card</SelectItem>
+                    <SelectItem value="Other">Other</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -355,6 +356,73 @@ function QuotationTemplatesTab() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function ExchangeRateSettingsTab() {
+  const { data, isLoading, upsert } = useSettingsRow('exchange_rate_settings');
+  const [form, setForm] = useState<Record<string, any>>({});
+
+  useEffect(() => {
+    if (data) setForm(data);
+  }, [data]);
+
+  const f = (k: string) => form[k] ?? '';
+  const fb = (k: string) => form[k] ?? false;
+  const set = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }));
+
+  if (isLoading) return <div className="erp-metric-card p-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto" /></div>;
+
+  return (
+    <div className="erp-metric-card space-y-4">
+      <h3 className="text-lg font-semibold">Exchange Rate Settings</h3>
+      <p className="text-sm text-muted-foreground">Configure automatic exchange rate updates.</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="flex items-center gap-2 md:col-span-2">
+          <Switch checked={fb('auto_update_enabled')} onCheckedChange={v => set('auto_update_enabled', v)} />
+          <Label>Enable Auto-Update</Label>
+        </div>
+        <div>
+          <Label>Update Frequency</Label>
+          <Select value={f('update_frequency') || 'Daily'} onValueChange={v => set('update_frequency', v)}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="Hourly">Hourly</SelectItem>
+              <SelectItem value="Daily">Daily</SelectItem>
+              <SelectItem value="Weekly">Weekly</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label>API Provider</Label>
+          <Select value={f('api_provider') || ''} onValueChange={v => set('api_provider', v)}>
+            <SelectTrigger><SelectValue placeholder="Select provider" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="exchangerate-api">ExchangeRate-API</SelectItem>
+              <SelectItem value="openexchangerates">Open Exchange Rates</SelectItem>
+              <SelectItem value="currencylayer">CurrencyLayer</SelectItem>
+              <SelectItem value="manual">Manual Only</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="md:col-span-2">
+          <Label>API Key</Label>
+          <Input type="password" value={f('api_key')} onChange={e => set('api_key', e.target.value)} placeholder="Enter API key (if applicable)" />
+        </div>
+        {data?.last_update && (
+          <div className="md:col-span-2 text-sm text-muted-foreground">
+            Last updated: {new Date(data.last_update).toLocaleString()}
+          </div>
+        )}
+      </div>
+      <Button onClick={() => {
+        const { id, created_at, updated_at, ...values } = form;
+        upsert.mutate(values);
+      }} disabled={upsert.isPending}>
+        {upsert.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+        Save Exchange Rate Settings
+      </Button>
     </div>
   );
 }
