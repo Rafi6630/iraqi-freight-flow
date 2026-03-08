@@ -1244,18 +1244,45 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
     if (!quotation) { toast.error('Generate quotation first (Step 4)'); return; }
     if (invoiceLineItems.length === 0) { toast.error('Add at least one line item'); return; }
     const year = new Date().getFullYear();
-    const invNo = `INV-${year}-${String(invoices.length + 1).padStart(4, '0')}`;
     const totalUsd = invoiceTotal;
-    const totalIqd = Math.round(totalUsd * fxRate);
-    await insertInvoice.mutateAsync({
-      invoice_no: invNo, order_id: order.id, customer_id: order.customer_id,
-      status: 'issued', amount_usd: totalUsd, amount_iqd: totalIqd,
-      fx_rate: fxRate, fx_date: quotation.fx_date || new Date().toISOString().split('T')[0],
-      is_fx_locked: true,
-      issued_date: invoiceDate,
-      due_date: invoiceDueDate,
-    });
-    toast.success('Invoice generated');
+
+    if (quotationPaymentTerms.length > 0) {
+      // Generate one invoice per payment term
+      let created = 0;
+      for (let i = 0; i < quotationPaymentTerms.length; i++) {
+        const term = quotationPaymentTerms[i];
+        const pct = term.percentage || 0;
+        const termUsd = Math.round(totalUsd * (pct / 100) * 100) / 100;
+        const termIqd = Math.round(termUsd * fxRate);
+        const invNo = `INV-${year}-${String(invoices.length + created + 1).padStart(4, '0')}`;
+        // Calculate due date: offset from invoice date based on term index
+        const termDueDays = (customer.payment_terms_days || 30) * (i + 1);
+        const termDueDate = new Date(new Date(invoiceDate).getTime() + termDueDays * 86400000).toISOString().split('T')[0];
+        try {
+          await insertInvoice.mutateAsync({
+            invoice_no: invNo, order_id: order.id, customer_id: order.customer_id,
+            status: 'issued', amount_usd: termUsd, amount_iqd: termIqd,
+            fx_rate: fxRate, fx_date: quotation.fx_date || new Date().toISOString().split('T')[0],
+            is_fx_locked: true, issued_date: invoiceDate, due_date: termDueDate,
+          });
+          created++;
+        } catch (err: any) {
+          toast.error(`Failed to create invoice for term ${i + 1}: ${err.message}`);
+        }
+      }
+      if (created > 0) toast.success(`${created} invoice(s) generated based on payment terms`);
+    } else {
+      // Single invoice (no payment terms)
+      const invNo = `INV-${year}-${String(invoices.length + 1).padStart(4, '0')}`;
+      const totalIqd = Math.round(totalUsd * fxRate);
+      await insertInvoice.mutateAsync({
+        invoice_no: invNo, order_id: order.id, customer_id: order.customer_id,
+        status: 'issued', amount_usd: totalUsd, amount_iqd: totalIqd,
+        fx_rate: fxRate, fx_date: quotation.fx_date || new Date().toISOString().split('T')[0],
+        is_fx_locked: true, issued_date: invoiceDate, due_date: invoiceDueDate,
+      });
+      toast.success('Invoice generated');
+    }
   };
 
   const handleGenerateBills = async () => {
