@@ -2064,7 +2064,7 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
         status: newPaid >= selectedBill.amount_usd ? 'paid' : 'partial',
       });
     }
-    setApForm(p => ({ ...p, ref_id: '', amount_usd: 0, reference: '' }));
+    setApForm(p => ({ ...p, ref_id: '', amount_usd: 0, reference: '', payment_fee_usd: 0, fee_description: '' }));
     toast.success('AP payment recorded');
   };
 
