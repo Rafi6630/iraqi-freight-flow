@@ -267,3 +267,94 @@ function PaymentMethodsTab() {
     </div>
   );
 }
+
+function QuotationTemplatesTab() {
+  const { data: templates = [], isLoading } = useTableQuery<any>('quotation_templates');
+  const insertTemplate = useInsertMutation('quotation_templates');
+  const updateTemplate = useUpdateMutation('quotation_templates');
+  const deleteTemplate = useDeleteMutation('quotation_templates');
+  const [open, setOpen] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [form, setForm] = useState({
+    template_name: '', company_logo_url: '', company_slogan: '',
+    is_default: false, is_standard: true,
+  });
+  const set = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }));
+
+  const handleSave = async () => {
+    if (!form.template_name) { toast.error('Template name required'); return; }
+    if (editId) {
+      await updateTemplate.mutateAsync({ id: editId, ...form });
+    } else {
+      await insertTemplate.mutateAsync(form);
+    }
+    setOpen(false);
+    setEditId(null);
+    setForm({ template_name: '', company_logo_url: '', company_slogan: '', is_default: false, is_standard: true });
+  };
+
+  const handleEdit = (t: any) => {
+    setEditId(t.id);
+    setForm({
+      template_name: t.template_name || '', company_logo_url: t.company_logo_url || '',
+      company_slogan: t.company_slogan || '', is_default: t.is_default || false, is_standard: t.is_standard ?? true,
+    });
+    setOpen(true);
+  };
+
+  if (isLoading) return <div className="erp-metric-card p-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto" /></div>;
+
+  return (
+    <div className="erp-metric-card space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-semibold">Quotation Templates</h3>
+          <p className="text-sm text-muted-foreground">Manage templates for quotation PDF generation.</p>
+        </div>
+        <Dialog open={open} onOpenChange={v => { setOpen(v); if (!v) { setEditId(null); setForm({ template_name: '', company_logo_url: '', company_slogan: '', is_default: false, is_standard: true }); } }}>
+          <DialogTrigger asChild><Button><Plus className="w-4 h-4 mr-2" />Add Template</Button></DialogTrigger>
+          <DialogContent>
+            <DialogHeader><DialogTitle>{editId ? 'Edit' : 'Add'} Quotation Template</DialogTitle></DialogHeader>
+            <div className="space-y-3">
+              <div><Label>Template Name *</Label><Input value={form.template_name} onChange={e => set('template_name', e.target.value)} placeholder="e.g. Standard Quotation" /></div>
+              <div><Label>Company Logo URL</Label><Input value={form.company_logo_url} onChange={e => set('company_logo_url', e.target.value)} placeholder="https://..." /></div>
+              <div><Label>Company Slogan</Label><Input value={form.company_slogan} onChange={e => set('company_slogan', e.target.value)} placeholder="Your trusted partner..." /></div>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2"><Switch checked={form.is_default} onCheckedChange={v => set('is_default', v)} /><Label>Default Template</Label></div>
+                <div className="flex items-center gap-2"><Switch checked={form.is_standard} onCheckedChange={v => set('is_standard', v)} /><Label>Standard</Label></div>
+              </div>
+              <Button onClick={handleSave} className="w-full" disabled={insertTemplate.isPending || updateTemplate.isPending}>
+                {editId ? 'Update' : 'Create'} Template
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
+      {templates.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No quotation templates configured.</p>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {templates.map((t: any) => (
+            <div key={t.id} className="p-4 border border-border rounded-lg space-y-2 relative">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="font-medium">{t.template_name}</p>
+                  <div className="flex gap-2 mt-1">
+                    {t.is_default && <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded">Default</span>}
+                    {t.is_standard && <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded">Standard</span>}
+                  </div>
+                </div>
+                <div className="flex gap-1">
+                  <Button variant="ghost" size="sm" onClick={() => handleEdit(t)}>Edit</Button>
+                  <Button variant="ghost" size="sm" onClick={() => deleteTemplate.mutate(t.id)}><Trash2 className="w-3 h-3 text-destructive" /></Button>
+                </div>
+              </div>
+              {t.company_slogan && <p className="text-xs text-muted-foreground">{t.company_slogan}</p>}
+              {t.company_logo_url && <p className="text-xs text-muted-foreground truncate">Logo: {t.company_logo_url}</p>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
