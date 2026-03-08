@@ -20,6 +20,7 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const { data: orders = [], isLoading: ordersLoading } = useTableQuery<any>('orders');
   const { data: invoices = [] } = useTableQuery<any>('invoices');
+  const { data: vendorBills = [] } = useTableQuery<any>('vendor_bills');
   const { data: payments = [] } = useTableQuery<any>('payments');
   const { data: customers = [] } = useTableQuery<any>('customers');
 
@@ -27,21 +28,29 @@ export default function Dashboard() {
     const totalRevenue = invoices.reduce((s: number, i: any) => s + (i.amount_usd || 0), 0);
     const paidAR = invoices.reduce((s: number, i: any) => s + (i.paid_usd || 0), 0);
     const outstandingAR = totalRevenue - paidAR;
+
+    const totalAP = vendorBills.reduce((s: number, b: any) => s + (b.amount_usd || 0), 0);
+    const paidAP = vendorBills.reduce((s: number, b: any) => s + (b.paid_usd || 0), 0);
+    const outstandingAP = totalAP - paidAP;
+
     const fxGainLoss = payments.reduce((s: number, p: any) => s + (p.fx_gain_loss_usd || 0), 0);
     const activeOrders = orders.filter((o: any) => o.status_step < 9).length;
     const overdueInvoices = invoices.filter((i: any) => i.status !== 'paid' && i.due_date && new Date(i.due_date) < new Date()).length;
+    const overdueBills = vendorBills.filter((b: any) => b.status !== 'paid' && b.due_date && new Date(b.due_date) < new Date()).length;
 
     return {
-      totalRevenue, outstandingAR, fxGainLoss, activeOrders, overdueInvoices,
-      pendingQuotations: 0,
+      totalRevenue, outstandingAR, outstandingAP, totalAP, fxGainLoss,
+      activeOrders, overdueInvoices, overdueBills,
     };
-  }, [orders, invoices, payments]);
+  }, [orders, invoices, vendorBills, payments]);
 
   const metricCards = [
     { label: 'Total Revenue', usd: metrics.totalRevenue, icon: DollarSign },
     { label: 'Outstanding AR', usd: metrics.outstandingAR, icon: Receipt },
+    { label: 'Outstanding AP', usd: metrics.outstandingAP, icon: TrendingDown },
     { label: 'Active Orders', usd: null, count: metrics.activeOrders, icon: Package },
     { label: 'Overdue Invoices', usd: null, count: metrics.overdueInvoices, icon: AlertTriangle },
+    { label: 'Overdue Bills', usd: null, count: metrics.overdueBills, icon: FileText },
     { label: 'FX Gain/Loss MTD', usd: metrics.fxGainLoss, icon: ArrowLeftRight, isFx: true },
   ];
 
