@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Check, ChevronRight, Lock, Plus, Trash2, FileDown, Eye, Send } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, Lock, Plus, Trash2, FileDown, Eye, Send, Upload, Printer, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -141,7 +141,7 @@ export default function OrderWizardPage() {
         {currentStep === 4 && <Step4 order={order} costs={costs} quotations={quotations} insertQuotation={insertQuotation} customerName={customerName} customers={customers} partners={partners} employees={employees} quotationTemplates={quotationTemplates} companySettings={companySettings} />}
         {currentStep === 5 && <Step5 quotations={quotations} />}
         {currentStep === 6 && <Step6 order={order} onSave={saveOrderField} />}
-        {currentStep === 7 && <Step7 order={order} quotations={quotations} costs={costs} invoices={invoices} vendorBills={vendorBills} insertInvoice={insertInvoice} insertBill={insertBill} customerName={customerName} vendors={vendors} payments={payments} customers={customers} />}
+        {currentStep === 7 && <Step7 order={order} quotations={quotations} costs={costs} invoices={invoices} vendorBills={vendorBills} insertInvoice={insertInvoice} insertBill={insertBill} customerName={customerName} vendors={vendors} payments={payments} customers={customers} employees={employees} partners={partners} companySettings={companySettings} />}
         {currentStep === 8 && <Step8 invoices={invoices} vendorBills={vendorBills} orderId={order.id} />}
         {currentStep === 9 && <Step9 order={order} costs={costs} invoices={invoices} onSave={saveOrderField} />}
       </div>
@@ -1131,13 +1131,16 @@ function Step6({ order, onSave }: any) {
   );
 }
 
-function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice, insertBill, customerName, vendors, payments, customers }: any) {
+function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice, insertBill, customerName, vendors, payments, customers, employees, partners, companySettings }: any) {
   const queryClient = useQueryClient();
+  const updateInvoice = useUpdateMutation('invoices');
+  const updateBill = useUpdateMutation('vendor_bills');
   const quotation = quotations[0];
   const fxRate = quotation?.fx_rate || DEFAULT_FX_RATE;
   const customer = customers?.find((c: any) => c.id === order.customer_id) || {};
+  const company = companySettings?.[0] || {};
 
-  // Fetch quotation payment terms
+  // Fetch quotation payment terms & services
   const { data: quotationPaymentTerms = [] } = useQuery({
     queryKey: ['quotation_payment_terms', quotation?.id],
     queryFn: async () => {
@@ -1149,9 +1152,25 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
     enabled: !!quotation?.id,
   });
 
-  // Vendor costs (exclude commission/incentive)
+  const { data: quotationServices = [] } = useQuery({
+    queryKey: ['quotation_services', quotation?.id],
+    queryFn: async () => {
+      if (!quotation?.id) return [];
+      const { data, error } = await (supabase.from('quotation_services') as any).select('*').eq('quotation_id', quotation.id);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!quotation?.id,
+  });
+
+  const { data: paymentMethods = [] } = useTableQuery<any>('payment_methods');
+
+  // Separate cost categories
   const vendorCosts = costs.filter((c: any) => c.category !== 'partner_commission' && c.category !== 'employee_incentive');
-  const commCosts = costs.filter((c: any) => c.category === 'partner_commission' || c.category === 'employee_incentive');
+  const partnerCommCosts = costs.filter((c: any) => c.category === 'partner_commission');
+  const employeeIncentiveCosts = costs.filter((c: any) => c.category === 'employee_incentive');
+  const totalCommUsd = [...partnerCommCosts, ...employeeIncentiveCosts].reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
+  const totalCommIqd = [...partnerCommCosts, ...employeeIncentiveCosts].reduce((s: number, c: any) => s + (c.amount_iqd || 0), 0);
 
   // Payment intents info
   const arPayments = payments.filter((p: any) => p.direction === 'AR');
@@ -1159,19 +1178,69 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
 
   // Totals
   const totalArUsd = invoices.reduce((s: number, i: any) => s + (i.amount_usd || 0), 0);
+  const totalArIqd = invoices.reduce((s: number, i: any) => s + (i.amount_iqd || 0), 0);
+  const totalArPaidUsd = invoices.reduce((s: number, i: any) => s + (i.paid_usd || 0), 0);
+  const totalArDueUsd = totalArUsd - totalArPaidUsd;
   const totalApUsd = vendorBills.reduce((s: number, b: any) => s + (b.amount_usd || 0), 0);
-  const profitUsd = totalArUsd - totalApUsd;
+  const totalApIqd = vendorBills.reduce((s: number, b: any) => s + (b.amount_iqd || 0), 0);
+  const totalApPaidUsd = vendorBills.reduce((s: number, b: any) => s + (b.paid_usd || 0), 0);
+  const totalApDueUsd = totalApUsd - totalApPaidUsd;
+  const grossProfitUsd = totalArUsd - totalApUsd - totalCommUsd;
+  const marginPct = totalArUsd > 0 ? (grossProfitUsd / totalArUsd) * 100 : 0;
+
+  // Invoice state
+  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [invoiceDueDate, setInvoiceDueDate] = useState(new Date(Date.now() + (customer.payment_terms_days || 30) * 86400000).toISOString().split('T')[0]);
+  const [invoiceLineItems, setInvoiceLineItems] = useState<{ description: string; qty: number; unit: string; unitPrice: number }[]>([]);
+  const [invoiceTaxRate, setInvoiceTaxRate] = useState(0);
+  const [invoiceNotes, setInvoiceNotes] = useState('');
+  const [invoicePaymentInstructions, setInvoicePaymentInstructions] = useState('');
+  const [billingAddress, setBillingAddress] = useState(customer.address ? `${customer.address}${customer.city ? `, ${customer.city}` : ''}` : '');
+
+  // Bill state
+  const [billDate, setBillDate] = useState(new Date().toISOString().split('T')[0]);
+  const [billTaxRate, setBillTaxRate] = useState(0);
+  const [billNotes, setBillNotes] = useState('');
+
+  // Populate invoice line items from quotation services
+  useEffect(() => {
+    if (quotationServices.length > 0 && invoiceLineItems.length === 0) {
+      setInvoiceLineItems(quotationServices.map((svc: any) => ({
+        description: svc.service_name,
+        qty: 1,
+        unit: 'Service',
+        unitPrice: svc.quoted_price_usd || 0,
+      })));
+    }
+  }, [quotationServices]);
+
+  const invoiceSubtotal = invoiceLineItems.reduce((s, li) => s + li.qty * li.unitPrice, 0);
+  const invoiceTaxAmount = invoiceSubtotal * (invoiceTaxRate / 100);
+  const invoiceTotal = invoiceSubtotal + invoiceTaxAmount;
+
+  const addInvoiceLineItem = () => setInvoiceLineItems(prev => [...prev, { description: '', qty: 1, unit: 'Service', unitPrice: 0 }]);
+  const removeInvoiceLineItem = (idx: number) => setInvoiceLineItems(prev => prev.filter((_, i) => i !== idx));
+  const updateInvoiceLineItem = (idx: number, field: string, value: any) => {
+    setInvoiceLineItems(prev => prev.map((li, i) => i === idx ? { ...li, [field]: value } : li));
+  };
+
+  const hasInvoices = invoices.length > 0;
+  const hasBills = vendorBills.length > 0;
 
   const handleGenerateInvoice = async () => {
-    if (!quotation) { toast.error('Generate quotation first'); return; }
+    if (!quotation) { toast.error('Generate quotation first (Step 4)'); return; }
+    if (invoiceLineItems.length === 0) { toast.error('Add at least one line item'); return; }
     const year = new Date().getFullYear();
-    const invNo = `INV-${order.order_no}`;
+    const invNo = `INV-${year}-${String(invoices.length + 1).padStart(4, '0')}`;
+    const totalUsd = invoiceTotal;
+    const totalIqd = Math.round(totalUsd * fxRate);
     await insertInvoice.mutateAsync({
       invoice_no: invNo, order_id: order.id, customer_id: order.customer_id,
-      status: 'issued', amount_usd: quotation.total_usd, amount_iqd: quotation.total_iqd,
-      fx_rate: fxRate, fx_date: quotation.fx_date, is_fx_locked: true,
-      issued_date: new Date().toISOString().split('T')[0],
-      due_date: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+      status: 'issued', amount_usd: totalUsd, amount_iqd: totalIqd,
+      fx_rate: fxRate, fx_date: quotation.fx_date || new Date().toISOString().split('T')[0],
+      is_fx_locked: true,
+      issued_date: invoiceDate,
+      due_date: invoiceDueDate,
     });
     toast.success('Invoice generated');
   };
@@ -1179,8 +1248,6 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
   const handleGenerateBills = async () => {
     const vendorGroups: Record<string, any[]> = {};
     vendorCosts.forEach((c: any) => { if (c.vendor_id) { if (!vendorGroups[c.vendor_id]) vendorGroups[c.vendor_id] = []; vendorGroups[c.vendor_id].push(c); } });
-    // Also add commission/incentive costs as INTERNAL_PAYABLES
-    const internalCosts = commCosts.filter((c: any) => c.amount_usd > 0);
 
     const year = new Date().getFullYear();
     let idx = vendorBills.length;
@@ -1188,30 +1255,19 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
       idx++;
       const totalUsd = (vCosts as any[]).reduce((s: number, c: any) => s + c.amount_usd, 0);
       const totalIqd = (vCosts as any[]).reduce((s: number, c: any) => s + c.amount_iqd, 0);
-      const billNo = `BILL-${order.order_no}`;
+      const vendor = vendors.find((v: any) => v.id === vendorId);
+      const vendorDueDays = vendor?.payment_terms_days || 30;
+      const billNo = `BILL-${year}-${String(idx).padStart(4, '0')}`;
+      const taxAmount = totalUsd * (billTaxRate / 100);
       await insertBill.mutateAsync({
         bill_no: billNo, order_id: order.id, vendor_id: vendorId,
-        status: 'issued', amount_usd: totalUsd, amount_iqd: totalIqd,
+        status: 'issued', amount_usd: totalUsd + taxAmount, amount_iqd: Math.round((totalUsd + taxAmount) * fxRate),
         fx_rate: fxRate, fx_date: new Date().toISOString().split('T')[0], is_fx_locked: true,
-        issued_date: new Date().toISOString().split('T')[0],
-        due_date: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+        issued_date: billDate,
+        due_date: new Date(Date.now() + vendorDueDays * 86400000).toISOString().split('T')[0],
       });
     }
-
-    // Generate internal payable bills for commissions
-    for (const ic of internalCosts) {
-      idx++;
-      const billNo = `BILL-${order.order_no}`;
-      await insertBill.mutateAsync({
-        bill_no: billNo, order_id: order.id, vendor_id: null,
-        status: 'issued', amount_usd: ic.amount_usd, amount_iqd: ic.amount_iqd,
-        fx_rate: fxRate, fx_date: new Date().toISOString().split('T')[0], is_fx_locked: true,
-        issued_date: new Date().toISOString().split('T')[0],
-        due_date: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
-      });
-    }
-
-    toast.success('Vendor bills generated');
+    toast.success('Vendor bills generated (commissions tracked separately in Finance)');
   };
 
   const handleDownloadInvoicePdf = (inv: any) => {
@@ -1219,211 +1275,368 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
       invoiceNo: inv.invoice_no, customerName, order,
       totalUsd: inv.amount_usd, totalIqd: inv.amount_iqd,
       fxRate: inv.fx_rate, fxDate: inv.fx_date,
+      lineItems: invoiceLineItems, taxRate: invoiceTaxRate,
+      paymentTerms: quotationPaymentTerms, notes: invoiceNotes,
+      paymentInstructions: invoicePaymentInstructions,
+      customer, companyName: company.company_name,
+      billingAddress,
+      paymentMethods,
     });
   };
 
   const handleDownloadBillPdf = (bill: any) => {
     const billCosts = vendorCosts.filter((c: any) => c.vendor_id === bill.vendor_id);
-    const vendorName = vendors.find((v: any) => v.id === bill.vendor_id)?.company || 'INTERNAL_PAYABLES';
+    const vendorName = vendors.find((v: any) => v.id === bill.vendor_id)?.company || 'Unknown Vendor';
     generateVendorBillPDF({
       billNo: bill.bill_no, vendorName, order,
       totalUsd: bill.amount_usd, totalIqd: bill.amount_iqd,
       fxRate: bill.fx_rate, fxDate: bill.fx_date, costs: billCosts,
+      taxRate: billTaxRate, notes: billNotes,
     });
   };
 
-  const hasInvoices = invoices.length > 0;
-  const hasBills = vendorBills.length > 0;
+  const getDaysOverdue = (dueDate: string) => {
+    if (!dueDate) return 0;
+    const diff = Math.floor((Date.now() - new Date(dueDate).getTime()) / 86400000);
+    return diff > 0 ? diff : 0;
+  };
+
+  const getInvoiceStatus = (inv: any) => {
+    if ((inv.paid_usd || 0) >= inv.amount_usd) return 'paid';
+    if (inv.due_date && new Date(inv.due_date) < new Date() && (inv.paid_usd || 0) < inv.amount_usd) return 'overdue';
+    if ((inv.paid_usd || 0) > 0) return 'partial';
+    return inv.status || 'draft';
+  };
 
   return (
     <div className="space-y-6">
-      <h3 className="text-lg font-semibold">Step 7 — Issue Docs AR/AP</h3>
-      <p className="text-sm text-muted-foreground">Auto create invoices & vendor bills</p>
+      <h3 className="text-lg font-semibold">Step 7 — Issue Documents AR/AP</h3>
+      <p className="text-sm text-muted-foreground">Generate invoices for customers and bills for vendors. Broker commissions & employee incentives tracked separately in Finance.</p>
 
-      {/* Payment Intents Created */}
-      {(hasInvoices || hasBills) && (
-        <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg space-y-1">
-          <p className="text-sm font-medium flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full border-2 border-blue-400 flex items-center justify-center text-blue-500 text-xs">○</span>
-            Payment Intents Created
-          </p>
-          {hasInvoices && (
-            <p className="text-xs text-muted-foreground ml-7">• {invoices.length} AR PaymentIntent(s): {invoices.map((i: any) => `PI: ${i.invoice_no}`).join(', ')}</p>
-          )}
-          {hasBills && (
-            <p className="text-xs text-muted-foreground ml-7">• {vendorBills.length} AP PaymentIntent(s): {vendorBills.map((b: any) => `PI: ${b.bill_no}`).join(', ')}</p>
-          )}
-          <p className="text-xs text-muted-foreground ml-7">✓ Payments can now be recorded in Step 7 without risk of duplication</p>
+      {/* ==================== ACCOUNTS RECEIVABLE (AR) ==================== */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 border-b border-border pb-2">
+          <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center"><span className="text-sm font-bold text-primary">AR</span></div>
+          <h4 className="text-base font-semibold">Accounts Receivable — Customer Invoice</h4>
         </div>
-      )}
 
-      {/* Warning to issue docs */}
-      {(!hasInvoices || !hasBills) && (
-        <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-          <p className="text-sm text-red-700 font-medium">⚠ Issue Invoices (AR) and vendor bills (AP) to proceed</p>
-        </div>
-      )}
+        {/* Invoice Generation Form */}
+        {!hasInvoices && (
+          <div className="space-y-4 p-4 bg-muted/30 rounded-lg border border-border">
+            <p className="text-sm font-semibold">📝 Generate Invoice from Quotation</p>
 
-      {/* Generate buttons */}
-      {(!hasInvoices || !hasBills) && (
-        <div className="grid grid-cols-2 gap-4">
-          <Button onClick={handleGenerateInvoice} disabled={insertInvoice.isPending || !quotation || hasInvoices}>
-            <FileDown className="w-4 h-4 mr-2" />Generate Invoice
-          </Button>
-          <Button variant="outline" onClick={handleGenerateBills} disabled={insertBill.isPending || costs.length === 0 || hasBills}>
-            <FileDown className="w-4 h-4 mr-2" />Generate Vendor Bills
-          </Button>
-        </div>
-      )}
-
-      {/* ===== INVOICES (AR) ===== */}
-      {hasInvoices && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded bg-blue-100 flex items-center justify-center"><span className="text-xs font-bold text-blue-700">$</span></div>
-            <h4 className="text-sm font-semibold">Invoices (AR)</h4>
-          </div>
-
-          {invoices.map((inv: any) => {
-            const dueUsd = (inv.amount_usd || 0) - (inv.paid_usd || 0);
-            return (
-              <div key={inv.id} className="border border-border rounded-lg overflow-hidden">
-                <div className="p-4 flex justify-between items-start">
-                  <div>
-                    <p className="font-mono font-semibold text-base">{inv.invoice_no}</p>
-                    <p className="text-xs text-muted-foreground">{formatUSD(inv.amount_usd)}</p>
-                    <p className="text-xs text-muted-foreground">Issued: {inv.issued_date} • Due: {inv.due_date}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xl font-bold text-primary">{formatUSD(inv.amount_usd)}</p>
-                    <p className="text-xs text-muted-foreground">Due: {formatUSD(dueUsd)}</p>
-                    <StatusBadge status={inv.status} />
-                  </div>
-                </div>
-                <div className="border-t border-border px-4 py-2 flex gap-2 bg-muted/30">
-                  <Button variant="ghost" size="sm" onClick={() => toast.info('Open invoice view')}>
-                    <Eye className="w-3.5 h-3.5 mr-1" />Open Invoice
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => handleDownloadInvoicePdf(inv)}>
-                    <FileDown className="w-3.5 h-3.5 mr-1" />Download PDF
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => window.print()}>
-                    🖨 Print
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: ['invoices'] })}>
-                    🔄
-                  </Button>
-                </div>
+            {/* Invoice metadata */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div>
+                <Label className="text-xs">Invoice # (auto)</Label>
+                <Input disabled value={`INV-${new Date().getFullYear()}-${String(invoices.length + 1).padStart(4, '0')}`} className="font-mono" />
               </div>
-            );
-          })}
+              <div>
+                <Label className="text-xs">Invoice Date</Label>
+                <Input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Due Date</Label>
+                <Input type="date" value={invoiceDueDate} onChange={e => setInvoiceDueDate(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Currency</Label>
+                <Input disabled value={quotation?.currency_input || 'USD'} />
+              </div>
+            </div>
 
-          {/* AR Payment Terms */}
-          {quotationPaymentTerms.length > 0 && (
-            <div className="space-y-2">
-              <h4 className="text-sm font-semibold">AR Payment Terms</h4>
+            {/* Customer details */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Customer</Label>
+                <Input disabled value={customer.company || customerName} />
+              </div>
+              <div>
+                <Label className="text-xs">Billing Address</Label>
+                <Input value={billingAddress} onChange={e => setBillingAddress(e.target.value)} placeholder="Enter billing address" />
+              </div>
+            </div>
+
+            {/* Invoice Line Items */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-semibold">Invoice Line Items</p>
+                <Button variant="outline" size="sm" onClick={addInvoiceLineItem}><Plus className="w-3 h-3 mr-1" />Add Line Item</Button>
+              </div>
               <div className="erp-table-container">
                 <table className="w-full text-sm">
                   <thead><tr className="border-b border-border bg-muted/50">
-                    <th className="text-left px-4 py-2 font-medium text-muted-foreground">Term #</th>
-                    <th className="text-left px-4 py-2 font-medium text-muted-foreground">Due Date</th>
-                    <th className="text-right px-4 py-2 font-medium text-muted-foreground">Amount</th>
-                    <th className="text-right px-4 py-2 font-medium text-muted-foreground">Paid</th>
-                    <th className="text-right px-4 py-2 font-medium text-muted-foreground">Due</th>
-                    <th className="text-center px-4 py-2 font-medium text-muted-foreground">Status</th>
+                    <th className="text-left px-3 py-2 font-medium text-muted-foreground">Description</th>
+                    <th className="text-center px-3 py-2 font-medium text-muted-foreground w-20">Qty</th>
+                    <th className="text-center px-3 py-2 font-medium text-muted-foreground w-24">Unit</th>
+                    <th className="text-right px-3 py-2 font-medium text-muted-foreground w-32">Unit Price</th>
+                    <th className="text-right px-3 py-2 font-medium text-muted-foreground w-32">Subtotal</th>
+                    <th className="w-10"></th>
                   </tr></thead>
                   <tbody>
-                    {quotationPaymentTerms.map((term: any, idx: number) => {
-                      const termAmountUsd = term.amount_usd || (quotation?.total_usd || 0) * ((term.percentage || 0) / 100);
-                      // Find matching AR payments for this term
-                      const paidUsd = idx < arPayments.length ? arPayments[idx]?.amount_usd || 0 : 0;
-                      const dueUsd = termAmountUsd - paidUsd;
-                      const termStatus = paidUsd >= termAmountUsd ? 'paid' : paidUsd > 0 ? 'partial' : 'pending';
-                      return (
-                        <tr key={term.id} className="border-b border-border">
-                          <td className="px-4 py-2">{term.percentage || idx + 1}</td>
-                          <td className="px-4 py-2 text-muted-foreground">{invoices[0]?.due_date || '—'}</td>
-                          <td className="px-4 py-2 text-right font-mono">{formatUSD(termAmountUsd)}</td>
-                          <td className="px-4 py-2 text-right font-mono text-emerald-600">{formatUSD(paidUsd)}</td>
-                          <td className="px-4 py-2 text-right font-mono">{formatUSD(dueUsd)}</td>
-                          <td className="px-4 py-2 text-center"><StatusBadge status={termStatus} /></td>
-                        </tr>
-                      );
-                    })}
+                    {invoiceLineItems.map((li, i) => (
+                      <tr key={i} className="border-b border-border">
+                        <td className="px-3 py-1"><Input value={li.description} onChange={e => updateInvoiceLineItem(i, 'description', e.target.value)} className="h-8 text-sm" /></td>
+                        <td className="px-3 py-1"><Input type="number" value={li.qty} onChange={e => updateInvoiceLineItem(i, 'qty', parseFloat(e.target.value) || 0)} className="h-8 text-sm text-center" /></td>
+                        <td className="px-3 py-1"><Input value={li.unit} onChange={e => updateInvoiceLineItem(i, 'unit', e.target.value)} className="h-8 text-sm text-center" /></td>
+                        <td className="px-3 py-1"><Input type="number" value={li.unitPrice || ''} onChange={e => updateInvoiceLineItem(i, 'unitPrice', parseFloat(e.target.value) || 0)} className="h-8 text-sm text-right" /></td>
+                        <td className="px-3 py-1 text-right font-mono text-sm">{formatUSD(li.qty * li.unitPrice)}</td>
+                        <td className="px-3 py-1"><Button variant="ghost" size="sm" onClick={() => removeInvoiceLineItem(i)}><Trash2 className="w-3 h-3 text-destructive" /></Button></td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
             </div>
-          )}
+
+            {/* Invoice Totals */}
+            <div className="p-3 bg-background rounded-lg border border-border">
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <p className="text-muted-foreground">Subtotal</p>
+                <p className="text-right font-mono">{formatUSD(invoiceSubtotal)} | {formatIQD(invoiceSubtotal * fxRate)}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-muted-foreground">Tax Rate %</p>
+                  <Input type="number" value={invoiceTaxRate || ''} onChange={e => setInvoiceTaxRate(parseFloat(e.target.value) || 0)} className="h-7 w-20 text-sm" />
+                </div>
+                <p className="text-right font-mono">{formatUSD(invoiceTaxAmount)} | {formatIQD(invoiceTaxAmount * fxRate)}</p>
+                <p className="font-semibold">Total</p>
+                <p className="text-right font-mono font-semibold text-primary">{formatUSD(invoiceTotal)} | {formatIQD(invoiceTotal * fxRate)}</p>
+              </div>
+            </div>
+
+            {/* Payment Terms from Quotation */}
+            {quotationPaymentTerms.length > 0 && (
+              <div>
+                <p className="text-sm font-semibold mb-2">Payment Terms (from quotation)</p>
+                <div className="erp-table-container">
+                  <table className="w-full text-sm">
+                    <thead><tr className="border-b border-border bg-muted/50">
+                      <th className="text-left px-3 py-2 font-medium text-muted-foreground">#</th>
+                      <th className="text-left px-3 py-2 font-medium text-muted-foreground">Description</th>
+                      <th className="text-right px-3 py-2 font-medium text-muted-foreground">%</th>
+                      <th className="text-right px-3 py-2 font-medium text-muted-foreground">Amount</th>
+                    </tr></thead>
+                    <tbody>
+                      {quotationPaymentTerms.map((t: any, i: number) => (
+                        <tr key={t.id} className="border-b border-border">
+                          <td className="px-3 py-2">{i + 1}</td>
+                          <td className="px-3 py-2">{t.description}</td>
+                          <td className="px-3 py-2 text-right font-mono">{t.percentage}%</td>
+                          <td className="px-3 py-2 text-right font-mono">{formatUSD(invoiceTotal * ((t.percentage || 0) / 100))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Invoice Notes */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Payment Instructions</Label>
+                <Textarea value={invoicePaymentInstructions} onChange={e => setInvoicePaymentInstructions(e.target.value)} rows={3} placeholder="Bank details, payment methods..." />
+                {paymentMethods.length > 0 && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Auto: {paymentMethods.filter((pm: any) => pm.is_default).map((pm: any) => `${pm.bank_name || pm.method_type} ${pm.account_number ? `(****${pm.account_number.slice(-4)})` : ''}`).join(', ') || 'No default payment method set'}
+                  </p>
+                )}
+              </div>
+              <div>
+                <Label className="text-xs">Additional Notes</Label>
+                <Textarea value={invoiceNotes} onChange={e => setInvoiceNotes(e.target.value)} rows={3} placeholder="Additional notes..." />
+              </div>
+            </div>
+
+            {/* Generate Invoice Button */}
+            <div className="flex gap-3">
+              <Button onClick={handleGenerateInvoice} disabled={insertInvoice.isPending || invoiceLineItems.length === 0} size="lg">
+                <FileDown className="w-4 h-4 mr-2" />Generate Invoice
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Existing Invoices */}
+        {hasInvoices && (
+          <div className="space-y-4">
+            {invoices.map((inv: any) => {
+              const dueUsd = (inv.amount_usd || 0) - (inv.paid_usd || 0);
+              const daysOverdue = getDaysOverdue(inv.due_date);
+              const status = getInvoiceStatus(inv);
+              return (
+                <div key={inv.id} className="border border-border rounded-lg overflow-hidden">
+                  <div className="p-4 flex justify-between items-start">
+                    <div>
+                      <p className="font-mono font-semibold text-base">{inv.invoice_no}</p>
+                      <p className="text-xs text-muted-foreground">Issued: {inv.issued_date} • Due: {inv.due_date}</p>
+                      <p className="text-xs text-muted-foreground">Customer: {customer.company || customerName}</p>
+                      {billingAddress && <p className="text-xs text-muted-foreground">Address: {billingAddress}</p>}
+                    </div>
+                    <div className="text-right space-y-1">
+                      <StatusBadge status={status} />
+                      <p className="text-lg font-bold text-primary">{formatUSD(inv.amount_usd)}</p>
+                      <p className="text-xs text-muted-foreground">{formatIQD(inv.amount_iqd)}</p>
+                      <p className="text-xs">Paid: <span className="text-emerald-600 font-medium">{formatUSD(inv.paid_usd || 0)}</span></p>
+                      <p className="text-xs">Due: <span className="font-medium">{formatUSD(dueUsd)}</span></p>
+                      {daysOverdue > 0 && <p className="text-xs text-destructive font-medium">{daysOverdue} days overdue</p>}
+                    </div>
+                  </div>
+
+                  {/* Installment schedule */}
+                  {quotationPaymentTerms.length > 0 && (
+                    <div className="border-t border-border px-4 py-3">
+                      <p className="text-xs font-semibold text-muted-foreground mb-2">Installment Schedule</p>
+                      <table className="w-full text-xs">
+                        <thead><tr className="border-b border-border">
+                          <th className="text-left py-1 font-medium text-muted-foreground">Term #</th>
+                          <th className="text-left py-1 font-medium text-muted-foreground">Due Date</th>
+                          <th className="text-right py-1 font-medium text-muted-foreground">Amount</th>
+                          <th className="text-center py-1 font-medium text-muted-foreground">Status</th>
+                        </tr></thead>
+                        <tbody>
+                          {quotationPaymentTerms.map((term: any, idx: number) => {
+                            const termAmountUsd = inv.amount_usd * ((term.percentage || 0) / 100);
+                            const paidUsd = idx < arPayments.length ? arPayments[idx]?.amount_usd || 0 : 0;
+                            const termStatus = paidUsd >= termAmountUsd ? 'paid' : paidUsd > 0 ? 'partial' : 'pending';
+                            return (
+                              <tr key={term.id} className="border-b border-border">
+                                <td className="py-1">{idx + 1}</td>
+                                <td className="py-1 text-muted-foreground">{inv.due_date || '—'}</td>
+                                <td className="py-1 text-right font-mono">{formatUSD(termAmountUsd)}</td>
+                                <td className="py-1 text-center"><StatusBadge status={termStatus} /></td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Invoice Actions */}
+                  <div className="border-t border-border px-4 py-2 flex flex-wrap gap-2 bg-muted/30">
+                    <Button variant="ghost" size="sm" onClick={() => handleDownloadInvoicePdf(inv)}>
+                      <Eye className="w-3.5 h-3.5 mr-1" />Preview
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => handleDownloadInvoicePdf(inv)}>
+                      <FileDown className="w-3.5 h-3.5 mr-1" />Download PDF
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => toast.info('Email sending coming soon')}>
+                      <Send className="w-3.5 h-3.5 mr-1" />Send to Customer
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => window.print()}>
+                      <Printer className="w-3.5 h-3.5 mr-1" />Print
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: ['invoices'] })}>
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ==================== ACCOUNTS PAYABLE (AP) ==================== */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 border-b border-border pb-2">
+          <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center"><span className="text-sm font-bold text-amber-700">AP</span></div>
+          <h4 className="text-base font-semibold">Accounts Payable — Vendor Bills</h4>
         </div>
-      )}
 
-      {/* ===== VENDOR BILLS (AP) ===== */}
-      {hasBills && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded bg-amber-100 flex items-center justify-center"><span className="text-xs font-bold text-amber-700">📋</span></div>
-            <h4 className="text-sm font-semibold">Vendor Bills (AP)</h4>
-          </div>
+        {/* Bill Generation Form */}
+        {!hasBills && (
+          <div className="space-y-4 p-4 bg-muted/30 rounded-lg border border-border">
+            <p className="text-sm font-semibold">📝 Auto-Generate Vendor Bills from Order Costs</p>
+            <p className="text-xs text-muted-foreground">Bills are generated per vendor from the cost sheet. Broker commissions and employee incentives are NOT included — they are tracked separately in Finance.</p>
 
-          <div className="erp-table-container">
-            <table className="w-full text-sm">
-              <thead><tr className="border-b border-border bg-muted/50">
-                <th className="text-left px-4 py-2 font-medium text-muted-foreground">Bill #</th>
-                <th className="text-left px-4 py-2 font-medium text-muted-foreground">Vendor</th>
-                <th className="text-left px-4 py-2 font-medium text-muted-foreground">Date</th>
-                <th className="text-left px-4 py-2 font-medium text-muted-foreground">Due Date</th>
-                <th className="text-right px-4 py-2 font-medium text-muted-foreground">Total</th>
-                <th className="text-right px-4 py-2 font-medium text-muted-foreground">Due</th>
-                <th className="text-center px-4 py-2 font-medium text-muted-foreground">Status</th>
-              </tr></thead>
-              <tbody>
-                {vendorBills.map((bill: any) => {
-                  const vendorName = vendors.find((v: any) => v.id === bill.vendor_id)?.company || 'INTERNAL_PAYABLES';
-                  const dueUsd = (bill.amount_usd || 0) - (bill.paid_usd || 0);
-                  const billStatus = (bill.paid_usd || 0) >= bill.amount_usd ? 'paid' : (bill.paid_usd || 0) > 0 ? 'partial' : bill.status;
-                  return (
-                    <tr key={bill.id} className="border-b border-border hover:bg-muted/30 transition-colors">
-                      <td className="px-4 py-2 font-mono font-medium text-primary cursor-pointer" onClick={() => handleDownloadBillPdf(bill)}>{bill.bill_no}</td>
-                      <td className="px-4 py-2">{vendorName}</td>
-                      <td className="px-4 py-2 text-muted-foreground">{bill.issued_date || '—'}</td>
-                      <td className="px-4 py-2 text-muted-foreground">{bill.due_date || '—'}</td>
-                      <td className="px-4 py-2 text-right font-mono">{formatUSD(bill.amount_usd)}</td>
-                      <td className="px-4 py-2 text-right font-mono text-orange-600">{formatUSD(dueUsd)}</td>
-                      <td className="px-4 py-2 text-center"><StatusBadge status={billStatus} /></td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          {/* AP Payment Terms */}
-          <div className="space-y-2">
-            <h4 className="text-sm font-semibold">AP Payment Terms</h4>
+            {/* Vendor cost preview */}
             <div className="erp-table-container">
               <table className="w-full text-sm">
                 <thead><tr className="border-b border-border bg-muted/50">
-                  <th className="text-left px-4 py-2 font-medium text-muted-foreground">Term #</th>
+                  <th className="text-left px-3 py-2 font-medium text-muted-foreground">Vendor</th>
+                  <th className="text-left px-3 py-2 font-medium text-muted-foreground">Description</th>
+                  <th className="text-right px-3 py-2 font-medium text-muted-foreground">Amount USD</th>
+                  <th className="text-right px-3 py-2 font-medium text-muted-foreground">Amount IQD</th>
+                </tr></thead>
+                <tbody>
+                  {vendorCosts.map((c: any) => (
+                    <tr key={c.id} className="border-b border-border">
+                      <td className="px-3 py-2">{vendors.find((v: any) => v.id === c.vendor_id)?.company || '—'}</td>
+                      <td className="px-3 py-2 text-muted-foreground">{c.description || c.category}</td>
+                      <td className="px-3 py-2 text-right font-mono">{formatUSD(c.amount_usd)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(c.amount_iqd)}</td>
+                    </tr>
+                  ))}
+                  {vendorCosts.length === 0 && (
+                    <tr><td colSpan={4} className="px-3 py-6 text-center text-muted-foreground">No vendor costs. Add costs in Step 3.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label className="text-xs">Bill Date</Label>
+                <Input type="date" value={billDate} onChange={e => setBillDate(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Tax Rate %</Label>
+                <Input type="number" value={billTaxRate || ''} onChange={e => setBillTaxRate(parseFloat(e.target.value) || 0)} />
+              </div>
+              <div>
+                <Label className="text-xs">Additional Notes</Label>
+                <Input value={billNotes} onChange={e => setBillNotes(e.target.value)} placeholder="Vendor ref #..." />
+              </div>
+            </div>
+
+            <Button onClick={handleGenerateBills} disabled={insertBill.isPending || vendorCosts.length === 0} size="lg">
+              <FileDown className="w-4 h-4 mr-2" />Generate Vendor Bills
+            </Button>
+          </div>
+        )}
+
+        {/* Existing Vendor Bills */}
+        {hasBills && (
+          <div className="space-y-3">
+            <div className="erp-table-container">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b border-border bg-muted/50">
+                  <th className="text-left px-4 py-2 font-medium text-muted-foreground">Bill #</th>
+                  <th className="text-left px-4 py-2 font-medium text-muted-foreground">Vendor</th>
+                  <th className="text-left px-4 py-2 font-medium text-muted-foreground">Date</th>
                   <th className="text-left px-4 py-2 font-medium text-muted-foreground">Due Date</th>
-                  <th className="text-right px-4 py-2 font-medium text-muted-foreground">Amount</th>
+                  <th className="text-right px-4 py-2 font-medium text-muted-foreground">Total</th>
                   <th className="text-right px-4 py-2 font-medium text-muted-foreground">Paid</th>
                   <th className="text-right px-4 py-2 font-medium text-muted-foreground">Due</th>
                   <th className="text-center px-4 py-2 font-medium text-muted-foreground">Status</th>
+                  <th className="text-center px-4 py-2 font-medium text-muted-foreground">Days Overdue</th>
+                  <th className="w-20"></th>
                 </tr></thead>
                 <tbody>
-                  {vendorBills.map((bill: any, idx: number) => {
-                    const paidUsd = bill.paid_usd || 0;
-                    const dueUsd = (bill.amount_usd || 0) - paidUsd;
-                    const termStatus = paidUsd >= bill.amount_usd ? 'paid' : paidUsd > 0 ? 'partial' : 'pending';
+                  {vendorBills.map((bill: any) => {
+                    const vendorName = vendors.find((v: any) => v.id === bill.vendor_id)?.company || 'Unknown';
+                    const dueUsd = (bill.amount_usd || 0) - (bill.paid_usd || 0);
+                    const billStatus = (bill.paid_usd || 0) >= bill.amount_usd ? 'paid' : (bill.paid_usd || 0) > 0 ? 'partial' : bill.due_date && new Date(bill.due_date) < new Date() ? 'overdue' : bill.status;
+                    const daysOverdue = getDaysOverdue(bill.due_date);
                     return (
-                      <tr key={bill.id} className="border-b border-border">
-                        <td className="px-4 py-2">{idx + 1}</td>
+                      <tr key={bill.id} className="border-b border-border hover:bg-muted/30 transition-colors">
+                        <td className="px-4 py-2 font-mono font-medium text-primary">{bill.bill_no}</td>
+                        <td className="px-4 py-2">{vendorName}</td>
+                        <td className="px-4 py-2 text-muted-foreground">{bill.issued_date || '—'}</td>
                         <td className="px-4 py-2 text-muted-foreground">{bill.due_date || '—'}</td>
                         <td className="px-4 py-2 text-right font-mono">{formatUSD(bill.amount_usd)}</td>
-                        <td className="px-4 py-2 text-right font-mono text-emerald-600">{formatUSD(paidUsd)}</td>
+                        <td className="px-4 py-2 text-right font-mono text-emerald-600">{formatUSD(bill.paid_usd || 0)}</td>
                         <td className="px-4 py-2 text-right font-mono">{formatUSD(dueUsd)}</td>
-                        <td className="px-4 py-2 text-center"><StatusBadge status={termStatus} /></td>
+                        <td className="px-4 py-2 text-center"><StatusBadge status={billStatus} /></td>
+                        <td className="px-4 py-2 text-center">{daysOverdue > 0 ? <span className="text-destructive font-medium">{daysOverdue}</span> : '—'}</td>
+                        <td className="px-4 py-2">
+                          <div className="flex gap-1">
+                            <Button variant="ghost" size="sm" onClick={() => handleDownloadBillPdf(bill)}><FileDown className="w-3.5 h-3.5" /></Button>
+                            <Button variant="ghost" size="sm" onClick={() => window.print()}><Printer className="w-3.5 h-3.5" /></Button>
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
@@ -1431,32 +1644,112 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
               </table>
             </div>
           </div>
+        )}
+      </div>
+
+      {/* ==================== COMMISSION & INCENTIVE TRACKING ==================== */}
+      {(partnerCommCosts.length > 0 || employeeIncentiveCosts.length > 0) && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 border-b border-border pb-2">
+            <div className="w-7 h-7 rounded-lg bg-purple-100 flex items-center justify-center"><span className="text-sm">🤝</span></div>
+            <h4 className="text-base font-semibold">Broker Commissions & Employee Incentives</h4>
+          </div>
+          <p className="text-xs text-muted-foreground">These are tracked separately in Finance (Employee Commissions Management) and are NOT included in vendor bills.</p>
+          <div className="erp-table-container">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-border bg-muted/50">
+                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Type</th>
+                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Description</th>
+                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Amount USD</th>
+                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Amount IQD</th>
+                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Payment Condition</th>
+              </tr></thead>
+              <tbody>
+                {partnerCommCosts.map((c: any) => (
+                  <tr key={c.id} className="border-b border-border">
+                    <td className="px-3 py-2">🤝 Broker Commission</td>
+                    <td className="px-3 py-2 text-muted-foreground">{c.description}</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatUSD(c.amount_usd)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(c.amount_iqd)}</td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">Pay after customer pays</td>
+                  </tr>
+                ))}
+                {employeeIncentiveCosts.map((c: any) => (
+                  <tr key={c.id} className="border-b border-border">
+                    <td className="px-3 py-2">💰 Employee Incentive</td>
+                    <td className="px-3 py-2 text-muted-foreground">{c.description}</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatUSD(c.amount_usd)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(c.amount_iqd)}</td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">On order completion</td>
+                  </tr>
+                ))}
+                <tr className="bg-muted/30 font-medium">
+                  <td colSpan={2} className="px-3 py-2 text-right">Total</td>
+                  <td className="px-3 py-2 text-right font-mono">{formatUSD(totalCommUsd)}</td>
+                  <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(totalCommIqd)}</td>
+                  <td></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
-      {/* ===== SUMMARY FOOTER ===== */}
-      {(hasInvoices || hasBills) && (
-        <div className="grid grid-cols-3 gap-4 p-4 bg-gradient-to-r from-emerald-50 via-amber-50 to-emerald-50 rounded-lg border border-border">
-          <div className="text-center">
-            <p className="text-xs text-muted-foreground mb-1">Total AR</p>
-            <p className="text-lg font-bold text-emerald-600">{formatUSD(totalArUsd)}</p>
+      {/* ==================== SUMMARY SECTION ==================== */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 border-b border-border pb-2">
+          <h4 className="text-base font-semibold">📊 Summary</h4>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          {/* AR Summary */}
+          <div className="p-4 bg-primary/5 rounded-lg border border-primary/20">
+            <p className="text-sm font-semibold mb-3">AR Summary</p>
+            <div className="space-y-1 text-sm">
+              <div className="flex justify-between"><span className="text-muted-foreground">Invoices issued</span><span className="font-medium">{invoices.length}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Total AR</span><span className="font-mono font-medium">{formatUSD(totalArUsd)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Amount paid</span><span className="font-mono text-emerald-600">{formatUSD(totalArPaidUsd)}</span></div>
+              <div className="flex justify-between border-t border-border pt-1"><span className="font-medium">Due</span><span className="font-mono font-semibold">{formatUSD(totalArDueUsd)}</span></div>
+            </div>
           </div>
-          <div className="text-center">
-            <p className="text-xs text-muted-foreground mb-1">Total AP</p>
-            <p className="text-lg font-bold text-red-500">{formatUSD(totalApUsd)}</p>
-          </div>
-          <div className="text-center">
-            <p className="text-xs text-muted-foreground mb-1">Profit</p>
-            <p className={`text-lg font-bold ${profitUsd >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{formatUSD(profitUsd)}</p>
+          {/* AP Summary */}
+          <div className="p-4 bg-amber-50 rounded-lg border border-amber-200">
+            <p className="text-sm font-semibold mb-3">AP Summary</p>
+            <div className="space-y-1 text-sm">
+              <div className="flex justify-between"><span className="text-muted-foreground">Bills issued</span><span className="font-medium">{vendorBills.length}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Total AP</span><span className="font-mono font-medium">{formatUSD(totalApUsd)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Amount paid</span><span className="font-mono text-emerald-600">{formatUSD(totalApPaidUsd)}</span></div>
+              <div className="flex justify-between border-t border-border pt-1"><span className="font-medium">Due</span><span className="font-mono font-semibold">{formatUSD(totalApDueUsd)}</span></div>
+            </div>
           </div>
         </div>
-      )}
 
-      {/* Go to Accounting Center */}
-      <div className="text-center">
-        <Button variant="outline" onClick={() => toast.info('Accounting center coming soon')}>
-          📊 Go to Accounting Center ↗
-        </Button>
+        {/* Gross Profit */}
+        <div className="p-4 bg-gradient-to-r from-emerald-50 to-primary/5 rounded-lg border border-border">
+          <p className="text-sm font-semibold mb-2">Gross Profit</p>
+          <div className="text-sm space-y-1">
+            <div className="flex justify-between"><span className="text-muted-foreground">Total AR</span><span className="font-mono">{formatUSD(totalArUsd)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">− Total AP</span><span className="font-mono">{formatUSD(totalApUsd)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">− Broker Commissions</span><span className="font-mono">{formatUSD(partnerCommCosts.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0))}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">− Employee Incentives</span><span className="font-mono">{formatUSD(employeeIncentiveCosts.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0))}</span></div>
+            <div className="flex justify-between border-t border-border pt-2 mt-1">
+              <span className="font-semibold">= Gross Profit</span>
+              <span className={cn('font-mono font-bold text-lg', grossProfitUsd >= 0 ? 'text-emerald-600' : 'text-destructive')}>
+                {formatUSD(grossProfitUsd)}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Margin %</span>
+              <span className="font-mono font-medium">{Math.round(marginPct * 100) / 100}%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Mark Step Complete */}
+      <div className="text-center pt-2">
+        <p className="text-xs text-muted-foreground mb-2">
+          {hasInvoices && hasBills ? '✅ At least one invoice and one bill generated. You can complete this step.' : '⚠ Generate at least one invoice (AR) and one vendor bill (AP) to complete this step.'}
+        </p>
       </div>
     </div>
   );
