@@ -1264,23 +1264,31 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
 
     const year = new Date().getFullYear();
     let idx = vendorBills.length;
+    let created = 0;
     for (const [vendorId, vCosts] of Object.entries(vendorGroups)) {
       idx++;
-      const totalUsd = (vCosts as any[]).reduce((s: number, c: any) => s + c.amount_usd, 0);
-      const totalIqd = (vCosts as any[]).reduce((s: number, c: any) => s + c.amount_iqd, 0);
+      const totalUsd = (vCosts as any[]).reduce((s: number, c: any) => s + Number(c.amount_usd || 0), 0);
       const vendor = vendors.find((v: any) => v.id === vendorId);
       const vendorDueDays = vendor?.payment_terms_days || 30;
       const billNo = `BILL-${year}-${String(idx).padStart(4, '0')}`;
       const taxAmount = totalUsd * (billTaxRate / 100);
-      await insertBill.mutateAsync({
-        bill_no: billNo, order_id: order.id, vendor_id: vendorId,
-        status: 'issued', amount_usd: totalUsd + taxAmount, amount_iqd: Math.round((totalUsd + taxAmount) * fxRate),
-        fx_rate: fxRate, fx_date: new Date().toISOString().split('T')[0], is_fx_locked: true,
-        issued_date: billDate,
-        due_date: new Date(Date.now() + vendorDueDays * 86400000).toISOString().split('T')[0],
-      });
+      const finalUsd = totalUsd + taxAmount;
+      const finalIqd = Math.round(finalUsd * fxRate);
+      try {
+        await insertBill.mutateAsync({
+          bill_no: billNo, order_id: order.id, vendor_id: vendorId,
+          status: 'issued', amount_usd: finalUsd, amount_iqd: finalIqd,
+          fx_rate: fxRate, fx_date: new Date().toISOString().split('T')[0], is_fx_locked: true,
+          issued_date: billDate,
+          due_date: new Date(Date.now() + vendorDueDays * 86400000).toISOString().split('T')[0],
+        });
+        created++;
+      } catch (err: any) {
+        console.error(`Failed to create bill for vendor ${vendorId}:`, err);
+        toast.error(`Failed to create bill for ${vendor?.company || vendorId}: ${err.message}`);
+      }
     }
-    toast.success('Vendor bills generated (commissions tracked separately in Finance)');
+    if (created > 0) toast.success(`${created} vendor bill(s) generated (commissions tracked separately in Finance)`);
   };
 
   const handleAddManualBill = async () => {
