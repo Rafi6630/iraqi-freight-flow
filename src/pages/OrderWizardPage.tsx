@@ -449,74 +449,151 @@ function Step3({ orderId, costs, vendors, partners, employees, order, insertCost
   );
 }
 
-function Step4({ order, costs, quotations, insertQuotation, customerName, partners, employees }: any) {
-  const [sellingPriceUsd, setSellingPriceUsd] = useState(0);
+function Step4({ order, costs, quotations, insertQuotation, customerName, partners, employees, quotationTemplates, companySettings }: any) {
+  const queryClient = useQueryClient();
+  const [quotationPriceUsd, setQuotationPriceUsd] = useState(0);
   const [validity, setValidity] = useState(30);
+  const [quotationDescription, setQuotationDescription] = useState('');
+  const [fxDate, setFxDate] = useState(new Date().toISOString().split('T')[0]);
+  const [fxRateOverride, setFxRateOverride] = useState<number>(DEFAULT_FX_RATE);
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [paymentTerms, setPaymentTerms] = useState([
     { description: '50% upon booking', percentage: 50 },
     { description: '50% upon delivery', percentage: 50 },
   ]);
   const [newTerm, setNewTerm] = useState({ description: '', percentage: 0 });
-  const [previewOpen, setPreviewOpen] = useState(false);
 
-  const fxRate = DEFAULT_FX_RATE;
+  const fxRate = fxRateOverride;
+  const company = companySettings?.[0] || {};
+
+  // Set default template
+  useEffect(() => {
+    if (!selectedTemplateId && quotationTemplates.length > 0) {
+      const def = quotationTemplates.find((t: any) => t.is_default) || quotationTemplates[0];
+      setSelectedTemplateId(def.id);
+    }
+  }, [quotationTemplates]);
 
   // Separate cost categories
   const vendorCosts = costs.filter((c: any) => c.category !== 'partner_commission' && c.category !== 'employee_incentive');
-  const commCosts = costs.filter((c: any) => c.category === 'partner_commission' || c.category === 'employee_incentive');
+  const partnerCommCosts = costs.filter((c: any) => c.category === 'partner_commission');
+  const employeeIncentiveCosts = costs.filter((c: any) => c.category === 'employee_incentive');
 
   const totalVendorCostUsd = vendorCosts.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
-  const totalCommUsd = commCosts.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
-  const totalCostWithCommUsd = totalVendorCostUsd + totalCommUsd;
+  const totalPartnerCommUsd = partnerCommCosts.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
+  const totalEmployeeIncentiveUsd = employeeIncentiveCosts.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
+  const totalCommUsd = totalPartnerCommUsd + totalEmployeeIncentiveUsd;
 
-  // Margin is calculated from price and vendor cost (without commission/incentive)
-  const marginUsd = sellingPriceUsd - totalVendorCostUsd;
-  const marginPct = totalVendorCostUsd > 0 ? Math.round((marginUsd / totalVendorCostUsd) * 10000) / 100 : 0;
+  // === PRICING FORMULA ===
+  // Total Profit = Quotation Price - Vendor Costs (excluding commissions)
+  const totalProfit = quotationPriceUsd - totalVendorCostUsd;
+  // Service Fee = 25% of Total Profit
+  const serviceFeeUsd = totalProfit * 0.25;
+  // Net Profit = Total Profit - Service Fee (remaining 75%)
+  const netProfitUsd = totalProfit - serviceFeeUsd;
+  // Margin % = (Service Fee ÷ Total Vendor Costs) × 100
+  const marginPct = totalVendorCostUsd > 0 ? (serviceFeeUsd / totalVendorCostUsd) * 100 : 0;
+  // Quoted Price per Service = Actual Cost + (Margin% × Actual Cost)
+  const serviceBreakdown = vendorCosts.map((c: any) => {
+    const costUsd = c.amount_usd || 0;
+    const costIqd = c.amount_iqd || 0;
+    const feeUsd = costUsd * (marginPct / 100);
+    const feeIqd = feeUsd * fxRate;
+    const quotedUsd = costUsd + feeUsd;
+    const quotedIqd = quotedUsd * fxRate;
+    return {
+      ...c,
+      vendor_cost_usd: costUsd,
+      vendor_cost_iqd: costIqd,
+      service_fee_usd: feeUsd,
+      service_fee_iqd: feeIqd,
+      quoted_price_usd: quotedUsd,
+      quoted_price_iqd: quotedIqd,
+    };
+  });
 
-  // Net profit = selling price - total cost (including commission/incentive)
-  const netProfitUsd = sellingPriceUsd - totalCostWithCommUsd;
+  // Final profit after commissions
+  const finalProfitUsd = netProfitUsd - totalCommUsd;
 
-  // Auto-set selling price on first render
+  // Auto-set price on first render
   useEffect(() => {
-    if (sellingPriceUsd === 0 && totalVendorCostUsd > 0) {
-      setSellingPriceUsd(Math.round(totalVendorCostUsd * 1.25 * 100) / 100);
+    if (quotationPriceUsd === 0 && totalVendorCostUsd > 0) {
+      setQuotationPriceUsd(Math.round(totalVendorCostUsd * 1.25 * 100) / 100);
     }
   }, [totalVendorCostUsd]);
 
+  // Payment terms logic
   const addPaymentTerm = () => {
     if (!newTerm.description || newTerm.percentage <= 0) return;
     setPaymentTerms(prev => [...prev, { ...newTerm }]);
     setNewTerm({ description: '', percentage: 0 });
   };
-
-  const removePaymentTerm = (idx: number) => {
-    setPaymentTerms(prev => prev.filter((_, i) => i !== idx));
-  };
-
+  const removePaymentTerm = (idx: number) => setPaymentTerms(prev => prev.filter((_, i) => i !== idx));
   const totalTermsPct = paymentTerms.reduce((s, t) => s + t.percentage, 0);
+
+  const selectedTemplate = quotationTemplates.find((t: any) => t.id === selectedTemplateId);
 
   const handleGenerate = async () => {
     if (costs.length === 0) { toast.error('Add costs first'); return; }
-    if (sellingPriceUsd <= 0) { toast.error('Enter selling price'); return; }
+    if (quotationPriceUsd <= 0) { toast.error('Enter quotation price'); return; }
     if (totalTermsPct !== 100) { toast.error('Payment terms must total 100%'); return; }
 
     const year = new Date().getFullYear();
-    const quoteNo = `QUO-${year}-${String(quotations.length + 1).padStart(4, '0')}`;
-    const serviceFeeUsd = marginUsd;
+    const quoteNo = `Q-${year}-${String(quotations.length + 1).padStart(4, '0')}`;
 
     await insertQuotation.mutateAsync({
       quote_no: quoteNo, order_id: order.id, status: 'draft',
-      margin_pct: marginPct, service_fee_usd: serviceFeeUsd, service_fee_iqd: serviceFeeUsd * fxRate,
-      total_usd: sellingPriceUsd, total_iqd: sellingPriceUsd * fxRate,
-      fx_rate: fxRate, fx_date: new Date().toISOString().split('T')[0],
+      margin_pct: Math.round(marginPct * 100) / 100,
+      service_fee_usd: Math.round(serviceFeeUsd * 100) / 100,
+      service_fee_iqd: Math.round(serviceFeeUsd * fxRate),
+      total_usd: quotationPriceUsd, total_iqd: Math.round(quotationPriceUsd * fxRate),
+      fx_rate: fxRate, fx_date: fxDate,
       is_fx_locked: true, validity_days: validity,
+      template_id: selectedTemplateId || null,
+      quotation_description: quotationDescription || null,
+      currency_input: 'USD',
     });
 
+    // Save quotation services
+    for (const svc of serviceBreakdown) {
+      await (supabase.from('quotation_services') as any).insert({
+        quotation_id: (await (supabase.from('quotations') as any).select('id').eq('quote_no', quoteNo).single()).data?.id,
+        service_name: svc.description || svc.category || 'Service',
+        vendor_cost_usd: svc.vendor_cost_usd, vendor_cost_iqd: svc.vendor_cost_iqd,
+        service_fee_usd: svc.service_fee_usd, service_fee_iqd: svc.service_fee_iqd,
+        quoted_price_usd: svc.quoted_price_usd, quoted_price_iqd: svc.quoted_price_iqd,
+        margin_pct: Math.round(marginPct * 100) / 100,
+        fx_rate: fxRate, fx_date: fxDate,
+      });
+    }
+
+    // Save payment terms
+    const quotationId = (await (supabase.from('quotations') as any).select('id').eq('quote_no', quoteNo).single()).data?.id;
+    if (quotationId) {
+      for (const term of paymentTerms) {
+        await (supabase.from('quotation_payment_terms') as any).insert({
+          quotation_id: quotationId,
+          description: term.description, percentage: term.percentage,
+          amount_usd: Math.round(quotationPriceUsd * (term.percentage / 100) * 100) / 100,
+          amount_iqd: Math.round(quotationPriceUsd * (term.percentage / 100) * fxRate),
+          currency: 'USD',
+        });
+      }
+    }
+
+    // Generate PDF
     generateQuotationPDF({
-      quoteNo, customerName, order, costs: vendorCosts, marginPct,
-      serviceFeeUsd, totalUsd: sellingPriceUsd, fxRate,
-      fxDate: new Date().toISOString().split('T')[0], validity,
+      quoteNo, customerName, order, costs: vendorCosts, marginPct: Math.round(marginPct * 100) / 100,
+      serviceFeeUsd: Math.round(serviceFeeUsd * 100) / 100,
+      totalUsd: quotationPriceUsd, fxRate, fxDate, validity,
+      serviceBreakdown, paymentTerms, quotationDescription,
+      companyName: company.company_name || 'FreightFlow Logistics',
+      companySlogan: company.company_slogan || 'Your Trusted Freight Forwarding Partner',
+      companyLogoUrl: selectedTemplate?.company_logo_url || company.company_logo_url || null,
     });
+
+    queryClient.invalidateQueries({ queryKey: ['quotations'] });
     toast.success('Quotation created & PDF downloaded');
   };
 
@@ -524,60 +601,64 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
     if (quotations.length === 0) { toast.error('Generate quotation first'); return; }
     const q = quotations[0];
     generateQuotationPDF({
-      quoteNo: q.quote_no, customerName, order, costs: vendorCosts, marginPct: q.margin_pct || marginPct,
-      serviceFeeUsd: q.service_fee_usd || marginUsd, totalUsd: q.total_usd || sellingPriceUsd, fxRate: q.fx_rate || fxRate,
-      fxDate: q.fx_date || new Date().toISOString().split('T')[0], validity: q.validity_days || validity,
+      quoteNo: q.quote_no, customerName, order, costs: vendorCosts,
+      marginPct: q.margin_pct || Math.round(marginPct * 100) / 100,
+      serviceFeeUsd: q.service_fee_usd || Math.round(serviceFeeUsd * 100) / 100,
+      totalUsd: q.total_usd || quotationPriceUsd, fxRate: q.fx_rate || fxRate,
+      fxDate: q.fx_date || fxDate, validity: q.validity_days || validity,
+      serviceBreakdown, paymentTerms, quotationDescription: q.quotation_description || quotationDescription,
+      companyName: company.company_name || 'FreightFlow Logistics',
+      companySlogan: company.company_slogan || 'Your Trusted Freight Forwarding Partner',
+      companyLogoUrl: selectedTemplate?.company_logo_url || company.company_logo_url || null,
     });
   };
 
-  const handleSendToCustomer = () => {
+  const handleSendToCustomer = async () => {
     if (quotations.length === 0) { toast.error('Generate quotation first'); return; }
-    toast.success('Quotation sent to customer (email integration pending)');
+    await (supabase.from('quotations') as any).update({ status: 'sent' }).eq('id', quotations[0].id);
+    queryClient.invalidateQueries({ queryKey: ['quotations'] });
+    toast.success('Quotation marked as sent to customer');
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <h3 className="text-lg font-semibold">Step 4 — Quotation Generation</h3>
 
-      {/* 1: Total cost with and without commission */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-muted/30 rounded-lg">
-        <div>
-          <p className="text-xs text-muted-foreground">Vendor Costs</p>
-          <p className="text-lg font-semibold">{formatUSD(totalVendorCostUsd)}</p>
-          <p className="text-xs text-muted-foreground">{formatIQD(totalVendorCostUsd * fxRate)}</p>
-        </div>
-        <div>
-          <p className="text-xs text-muted-foreground">Commission + Incentive</p>
-          <p className="text-lg font-semibold">{formatUSD(totalCommUsd)}</p>
-          <p className="text-xs text-muted-foreground">{formatIQD(totalCommUsd * fxRate)}</p>
-        </div>
-        <div>
-          <p className="text-xs text-muted-foreground">Total Cost (with Comm.)</p>
-          <p className="text-lg font-semibold">{formatUSD(totalCostWithCommUsd)}</p>
-          <p className="text-xs text-muted-foreground">{formatIQD(totalCostWithCommUsd * fxRate)}</p>
-        </div>
-        <div>
-          <p className="text-xs text-muted-foreground">Total Cost (without Comm.)</p>
-          <p className="text-lg font-semibold">{formatUSD(totalVendorCostUsd)}</p>
-          <p className="text-xs text-muted-foreground">{formatIQD(totalVendorCostUsd * fxRate)}</p>
+      {/* 4.1 Template Selection */}
+      <div className="p-4 bg-muted/30 rounded-lg border border-border">
+        <p className="text-sm font-semibold mb-3">📋 Template Selection</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {quotationTemplates.length > 0 ? (
+            quotationTemplates.map((t: any) => (
+              <button key={t.id} onClick={() => setSelectedTemplateId(t.id)}
+                className={cn('p-3 rounded-lg border text-left transition-all',
+                  selectedTemplateId === t.id ? 'border-primary bg-primary/5 ring-2 ring-primary/20' : 'border-border hover:border-primary/40'
+                )}>
+                <p className="text-sm font-medium">{t.template_name}</p>
+                {t.is_default && <span className="text-xs text-muted-foreground">Default</span>}
+                {t.is_standard && <span className="text-xs text-primary ml-2">Standard</span>}
+              </button>
+            ))
+          ) : (
+            <div className="col-span-3 text-sm text-muted-foreground">No templates found. Using default template. Add templates in Settings.</div>
+          )}
         </div>
       </div>
 
-      {/* 2: Price and auto-calculated margin */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+      {/* 4.2 Pricing Input */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div>
-          <Label>Selling Price (USD) *</Label>
-          <Input type="number" value={sellingPriceUsd || ''} onChange={e => setSellingPriceUsd(parseFloat(e.target.value) || 0)} />
-          <p className="text-xs text-muted-foreground mt-1">{formatIQD(sellingPriceUsd * fxRate)}</p>
+          <Label>Quotation Price (USD) *</Label>
+          <Input type="number" value={quotationPriceUsd || ''} onChange={e => setQuotationPriceUsd(parseFloat(e.target.value) || 0)} />
+          <p className="text-xs text-muted-foreground mt-1">{formatIQD(quotationPriceUsd * fxRate)}</p>
         </div>
         <div>
-          <Label>Margin (auto-calculated)</Label>
-          <div className="h-10 flex items-center px-3 bg-muted rounded-md border border-input">
-            <span className={cn('font-semibold', marginPct >= 0 ? 'text-[hsl(var(--success))]' : 'text-destructive')}>
-              {marginPct}% ({formatUSD(marginUsd)})
-            </span>
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">Price − Vendor Cost (without comm.)</p>
+          <Label>FX Date</Label>
+          <Input type="date" value={fxDate} onChange={e => setFxDate(e.target.value)} />
+        </div>
+        <div>
+          <Label>FX Rate (USD/IQD)</Label>
+          <Input type="number" value={fxRateOverride} onChange={e => setFxRateOverride(parseFloat(e.target.value) || DEFAULT_FX_RATE)} />
         </div>
         <div>
           <Label>Validity (days)</Label>
@@ -585,69 +666,151 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
         </div>
       </div>
 
-      {/* 3: Calculation Breakdown */}
+      {/* 4.2 Pricing Formula Display */}
       <div className="p-4 bg-muted/30 rounded-lg border border-border">
-        <p className="text-sm font-semibold mb-3">📊 Calculation Breakdown</p>
-        <table className="w-full text-sm">
-          <tbody>
-            <tr className="border-b border-border">
-              <td className="py-2 text-muted-foreground">Vendor Costs (A)</td>
-              <td className="py-2 text-right font-mono">{formatUSD(totalVendorCostUsd)}</td>
-              <td className="py-2 text-right font-mono text-muted-foreground">{formatIQD(totalVendorCostUsd * fxRate)}</td>
-            </tr>
-            <tr className="border-b border-border">
-              <td className="py-2 text-muted-foreground">Partner/Broker Commission (B)</td>
-              <td className="py-2 text-right font-mono">{formatUSD(commCosts.filter((c: any) => c.category === 'partner_commission').reduce((s: number, c: any) => s + c.amount_usd, 0))}</td>
-              <td className="py-2 text-right font-mono text-muted-foreground">{formatIQD(commCosts.filter((c: any) => c.category === 'partner_commission').reduce((s: number, c: any) => s + c.amount_iqd, 0))}</td>
-            </tr>
-            <tr className="border-b border-border">
-              <td className="py-2 text-muted-foreground">Employee Incentive (C)</td>
-              <td className="py-2 text-right font-mono">{formatUSD(commCosts.filter((c: any) => c.category === 'employee_incentive').reduce((s: number, c: any) => s + c.amount_usd, 0))}</td>
-              <td className="py-2 text-right font-mono text-muted-foreground">{formatIQD(commCosts.filter((c: any) => c.category === 'employee_incentive').reduce((s: number, c: any) => s + c.amount_iqd, 0))}</td>
-            </tr>
-            <tr className="border-b border-border bg-muted/50">
-              <td className="py-2 font-medium">Total Cost (A+B+C)</td>
-              <td className="py-2 text-right font-mono font-medium">{formatUSD(totalCostWithCommUsd)}</td>
-              <td className="py-2 text-right font-mono text-muted-foreground">{formatIQD(totalCostWithCommUsd * fxRate)}</td>
-            </tr>
-            <tr className="border-b border-border">
-              <td className="py-2 text-muted-foreground">Selling Price (D)</td>
-              <td className="py-2 text-right font-mono">{formatUSD(sellingPriceUsd)}</td>
-              <td className="py-2 text-right font-mono text-muted-foreground">{formatIQD(sellingPriceUsd * fxRate)}</td>
-            </tr>
-            <tr className="border-b border-border">
-              <td className="py-2 text-muted-foreground">Margin (D−A) = {marginPct}%</td>
-              <td className="py-2 text-right font-mono">{formatUSD(marginUsd)}</td>
-              <td className="py-2 text-right font-mono text-muted-foreground">{formatIQD(marginUsd * fxRate)}</td>
-            </tr>
-            <tr className={cn(netProfitUsd >= 0 ? 'bg-accent' : 'bg-destructive/10')}>
-              <td className="py-2 font-semibold">Net Profit (D−A−B−C)</td>
-              <td className={cn('py-2 text-right font-mono font-semibold', netProfitUsd >= 0 ? 'text-[hsl(var(--success))]' : 'text-destructive')}>{formatUSD(netProfitUsd)}</td>
-              <td className="py-2 text-right font-mono text-muted-foreground">{formatIQD(netProfitUsd * fxRate)}</td>
-            </tr>
-          </tbody>
-        </table>
+        <p className="text-sm font-semibold mb-3">🧮 Pricing Formula</p>
+        <div className="text-xs text-muted-foreground space-y-1 mb-3">
+          <p>Total Profit = Quotation Price − Vendor Costs</p>
+          <p>Service Fee = 25% of Total Profit</p>
+          <p>Net Profit = 75% of Total Profit (remaining after Service Fee)</p>
+          <p>Margin % = Service Fee ÷ Total Vendor Costs × 100</p>
+          <p>Quoted Price per Service = Cost + (Margin% × Cost)</p>
+        </div>
       </div>
 
-      {/* 4: Payment Terms */}
+      {/* 4.3 Quotation Structure — Per-service breakdown */}
+      <div className="p-4 bg-muted/30 rounded-lg border border-border">
+        <p className="text-sm font-semibold mb-3">📊 Service Breakdown</p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-muted/50">
+                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Service</th>
+                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Vendor Cost USD</th>
+                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Vendor Cost IQD</th>
+                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Service Fee USD</th>
+                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Service Fee IQD</th>
+                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Quoted USD</th>
+                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Quoted IQD</th>
+              </tr>
+            </thead>
+            <tbody>
+              {serviceBreakdown.map((svc: any, i: number) => (
+                <tr key={i} className="border-b border-border">
+                  <td className="px-3 py-2">{svc.description || svc.category || 'Service'}</td>
+                  <td className="px-3 py-2 text-right font-mono">{formatUSD(svc.vendor_cost_usd)}</td>
+                  <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(svc.vendor_cost_iqd)}</td>
+                  <td className="px-3 py-2 text-right font-mono">{formatUSD(svc.service_fee_usd)}</td>
+                  <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(svc.service_fee_iqd)}</td>
+                  <td className="px-3 py-2 text-right font-mono font-medium">{formatUSD(svc.quoted_price_usd)}</td>
+                  <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(svc.quoted_price_iqd)}</td>
+                </tr>
+              ))}
+              {/* Service Fee as separate line */}
+              <tr className="border-b border-border bg-accent/30">
+                <td className="px-3 py-2 font-medium" colSpan={5}>Service Fee (25% of Profit)</td>
+                <td className="px-3 py-2 text-right font-mono font-medium">{formatUSD(serviceFeeUsd)}</td>
+                <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(serviceFeeUsd * fxRate)}</td>
+              </tr>
+              {/* Total */}
+              <tr className="bg-muted/50 font-semibold">
+                <td className="px-3 py-2" colSpan={5}>TOTAL</td>
+                <td className="px-3 py-2 text-right font-mono">{formatUSD(quotationPriceUsd)}</td>
+                <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(quotationPriceUsd * fxRate)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* 4.4 Payment Terms */}
       <div className="p-4 bg-muted/30 rounded-lg border border-border">
         <p className="text-sm font-semibold mb-3">💳 Payment Terms</p>
-        {paymentTerms.map((t, i) => (
-          <div key={i} className="flex items-center gap-3 mb-2">
-            <span className="text-sm flex-1">{t.description}</span>
-            <span className="text-sm font-mono w-16 text-right">{t.percentage}%</span>
-            <span className="text-sm font-mono w-28 text-right">{formatUSD(sellingPriceUsd * (t.percentage / 100))}</span>
-            <Button variant="ghost" size="sm" onClick={() => removePaymentTerm(i)}><Trash2 className="w-3 h-3 text-destructive" /></Button>
-          </div>
-        ))}
-        <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border">
+        <table className="w-full text-sm mb-3">
+          <thead>
+            <tr className="border-b border-border">
+              <th className="text-left py-2 font-medium text-muted-foreground">Description</th>
+              <th className="text-right py-2 font-medium text-muted-foreground w-16">%</th>
+              <th className="text-right py-2 font-medium text-muted-foreground">USD</th>
+              <th className="text-right py-2 font-medium text-muted-foreground">IQD</th>
+              <th className="w-10"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {paymentTerms.map((t, i) => (
+              <tr key={i} className="border-b border-border">
+                <td className="py-2">{t.description}</td>
+                <td className="py-2 text-right font-mono">{t.percentage}%</td>
+                <td className="py-2 text-right font-mono">{formatUSD(quotationPriceUsd * (t.percentage / 100))}</td>
+                <td className="py-2 text-right font-mono text-muted-foreground">{formatIQD(quotationPriceUsd * (t.percentage / 100) * fxRate)}</td>
+                <td className="py-2"><Button variant="ghost" size="sm" onClick={() => removePaymentTerm(i)}><Trash2 className="w-3 h-3 text-destructive" /></Button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="flex items-center gap-2 pt-2 border-t border-border">
           <Input placeholder="Term description" value={newTerm.description} onChange={e => setNewTerm(p => ({ ...p, description: e.target.value }))} className="flex-1" />
           <Input type="number" placeholder="%" value={newTerm.percentage || ''} onChange={e => setNewTerm(p => ({ ...p, percentage: parseFloat(e.target.value) || 0 }))} className="w-20" />
           <Button variant="outline" size="sm" onClick={addPaymentTerm}><Plus className="w-3 h-3" /></Button>
         </div>
-        <p className={cn('text-xs mt-2', totalTermsPct === 100 ? 'text-[hsl(var(--success))]' : 'text-destructive')}>
-          Total: {totalTermsPct}% {totalTermsPct !== 100 && '(must be 100%)'}
+        <p className={cn('text-xs mt-2 font-medium', totalTermsPct === 100 ? 'text-[hsl(var(--success))]' : 'text-destructive')}>
+          Total: {totalTermsPct}% {totalTermsPct !== 100 && '⚠ Must equal 100%'}
         </p>
+      </div>
+
+      {/* 4.5 Additional Fields */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <Label>Quotation Description / Terms & Conditions</Label>
+          <Textarea value={quotationDescription} onChange={e => setQuotationDescription(e.target.value)} rows={3} placeholder="Enter terms and conditions..." />
+        </div>
+        <div className="space-y-3">
+          {quotations.length > 0 && (
+            <div>
+              <Label>Status</Label>
+              <p className="text-sm font-medium mt-1 capitalize">{quotations[0].status}</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 4.6 Quotation Summary */}
+      <div className="p-4 bg-primary/5 rounded-lg border border-primary/20">
+        <p className="text-sm font-semibold mb-3">📋 Quotation Summary</p>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <div>
+            <p className="text-xs text-muted-foreground">Quotation Price</p>
+            <p className="text-lg font-semibold">{formatUSD(quotationPriceUsd)}</p>
+            <p className="text-xs text-muted-foreground">{formatIQD(quotationPriceUsd * fxRate)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Total Cost (Vendor)</p>
+            <p className="text-lg font-semibold">{formatUSD(totalVendorCostUsd)}</p>
+            <p className="text-xs text-muted-foreground">{formatIQD(totalVendorCostUsd * fxRate)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Total Profit</p>
+            <p className={cn('text-lg font-semibold', totalProfit >= 0 ? 'text-[hsl(var(--success))]' : 'text-destructive')}>{formatUSD(totalProfit)}</p>
+            <p className="text-xs text-muted-foreground">{formatIQD(totalProfit * fxRate)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Margin %</p>
+            <p className="text-lg font-semibold">{Math.round(marginPct * 100) / 100}%</p>
+            <p className="text-xs text-muted-foreground">Service Fee ÷ Cost</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">FX Rate & Date</p>
+            <p className="text-lg font-semibold">{fxRate.toLocaleString()}</p>
+            <p className="text-xs text-muted-foreground">{fxDate}</p>
+          </div>
+        </div>
+        {/* Detailed breakdown */}
+        <div className="mt-3 pt-3 border-t border-primary/10 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+          <div><span className="text-xs text-muted-foreground">Service Fee (25%)</span><p className="font-mono">{formatUSD(serviceFeeUsd)}</p></div>
+          <div><span className="text-xs text-muted-foreground">Net Profit (75%)</span><p className="font-mono">{formatUSD(netProfitUsd)}</p></div>
+          <div><span className="text-xs text-muted-foreground">Commissions</span><p className="font-mono">{formatUSD(totalCommUsd)}</p></div>
+          <div><span className="text-xs text-muted-foreground">Final Profit</span><p className={cn('font-mono font-semibold', finalProfitUsd >= 0 ? 'text-[hsl(var(--success))]' : 'text-destructive')}>{formatUSD(finalProfitUsd)}</p></div>
+        </div>
       </div>
 
       {/* Existing quotation status */}
@@ -657,10 +820,10 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
         </div>
       )}
 
-      {/* 5: Generate, Preview, Download, Send buttons */}
+      {/* 4.7 Generate, Preview, Download, Send */}
       <div className="flex flex-wrap gap-3">
-        <Button onClick={handleGenerate} disabled={insertQuotation.isPending}>
-          <FileDown className="w-4 h-4 mr-2" />{quotations.length > 0 ? 'Regenerate' : 'Generate'} Quotation
+        <Button onClick={handleGenerate} disabled={insertQuotation.isPending} size="lg">
+          <FileDown className="w-4 h-4 mr-2" />{quotations.length > 0 ? 'Regenerate' : 'Generate'} Quotation PDF
         </Button>
         {quotations.length > 0 && (
           <>
@@ -679,48 +842,86 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
 
       {/* Preview Dialog */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Quotation Preview — {quotations[0]?.quote_no || 'Draft'}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 text-sm">
+            {/* Company & Customer */}
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="text-lg font-bold">{company.company_name || 'FreightFlow Logistics'}</p>
+                <p className="text-xs text-muted-foreground">{company.company_slogan || ''}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-muted-foreground">Quotation #</p>
+                <p className="font-mono font-medium">{quotations[0]?.quote_no || 'Draft'}</p>
+              </div>
+            </div>
+
+            {/* Order & Customer Details */}
             <div className="grid grid-cols-2 gap-4 p-4 bg-muted/30 rounded-lg">
               <div><p className="text-xs text-muted-foreground">Customer</p><p className="font-medium">{customerName}</p></div>
               <div><p className="text-xs text-muted-foreground">Order</p><p className="font-medium">{order.order_no}</p></div>
-              <div><p className="text-xs text-muted-foreground">Route</p><p>{order.origin_country} → {order.destination_country}</p></div>
-              <div><p className="text-xs text-muted-foreground">Mode</p><p className="uppercase">{order.mode}</p></div>
+              <div><p className="text-xs text-muted-foreground">Route</p><p>{order.origin_city || order.origin_country} → {order.destination_city || order.destination_country}</p></div>
+              <div><p className="text-xs text-muted-foreground">Mode / Incoterm</p><p className="uppercase">{order.mode} {order.incoterm ? `/ ${order.incoterm}` : ''}</p></div>
+              <div><p className="text-xs text-muted-foreground">Cargo</p><p>{order.cargo_desc || '—'}</p></div>
+              <div><p className="text-xs text-muted-foreground">ETD / ETA</p><p>{order.etd || '—'} → {order.eta || '—'}</p></div>
             </div>
 
+            {/* Services table */}
             <table className="w-full text-sm border border-border">
               <thead><tr className="bg-primary text-primary-foreground">
                 <th className="px-3 py-2 text-left">Service</th>
-                <th className="px-3 py-2 text-right">USD</th>
-                <th className="px-3 py-2 text-right">IQD</th>
+                <th className="px-3 py-2 text-right">Cost USD</th>
+                <th className="px-3 py-2 text-right">Cost IQD</th>
+                <th className="px-3 py-2 text-right">Fee USD</th>
+                <th className="px-3 py-2 text-right">Quoted USD</th>
+                <th className="px-3 py-2 text-right">Quoted IQD</th>
               </tr></thead>
               <tbody>
-                {vendorCosts.map((c: any, i: number) => (
+                {serviceBreakdown.map((svc: any, i: number) => (
                   <tr key={i} className="border-b border-border">
-                    <td className="px-3 py-2">{c.description || c.category || 'Service'}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatUSD(c.amount_usd * (1 + marginPct / 100))}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatIQD(c.amount_usd * (1 + marginPct / 100) * fxRate)}</td>
+                    <td className="px-3 py-2">{svc.description || svc.category || 'Service'}</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatUSD(svc.vendor_cost_usd)}</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatIQD(svc.vendor_cost_iqd)}</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatUSD(svc.service_fee_usd)}</td>
+                    <td className="px-3 py-2 text-right font-mono font-medium">{formatUSD(svc.quoted_price_usd)}</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatIQD(svc.quoted_price_iqd)}</td>
                   </tr>
                 ))}
+                <tr className="bg-accent/30 border-b border-border">
+                  <td className="px-3 py-2 font-medium" colSpan={4}>Service Fee</td>
+                  <td className="px-3 py-2 text-right font-mono font-medium">{formatUSD(serviceFeeUsd)}</td>
+                  <td className="px-3 py-2 text-right font-mono">{formatIQD(serviceFeeUsd * fxRate)}</td>
+                </tr>
                 <tr className="font-semibold bg-muted/50">
-                  <td className="px-3 py-2">TOTAL</td>
-                  <td className="px-3 py-2 text-right font-mono">{formatUSD(sellingPriceUsd)}</td>
-                  <td className="px-3 py-2 text-right font-mono">{formatIQD(sellingPriceUsd * fxRate)}</td>
+                  <td className="px-3 py-2" colSpan={4}>TOTAL</td>
+                  <td className="px-3 py-2 text-right font-mono">{formatUSD(quotationPriceUsd)}</td>
+                  <td className="px-3 py-2 text-right font-mono">{formatIQD(quotationPriceUsd * fxRate)}</td>
                 </tr>
               </tbody>
             </table>
 
+            {/* Payment Terms */}
             <div className="p-3 bg-muted/30 rounded-lg">
               <p className="text-xs font-semibold mb-2">Payment Terms</p>
               {paymentTerms.map((t, i) => (
-                <p key={i} className="text-xs">{t.description}: {t.percentage}% — {formatUSD(sellingPriceUsd * (t.percentage / 100))}</p>
+                <p key={i} className="text-xs">{t.description}: {t.percentage}% — {formatUSD(quotationPriceUsd * (t.percentage / 100))} | {formatIQD(quotationPriceUsd * (t.percentage / 100) * fxRate)}</p>
               ))}
             </div>
 
-            <p className="text-xs text-muted-foreground">Validity: {validity} days from date of issue. FX Rate: {fxRate} USD/IQD.</p>
+            {/* Terms & Conditions */}
+            {quotationDescription && (
+              <div className="p-3 bg-muted/30 rounded-lg">
+                <p className="text-xs font-semibold mb-1">Terms & Conditions</p>
+                <p className="text-xs whitespace-pre-wrap">{quotationDescription}</p>
+              </div>
+            )}
+
+            <p className="text-xs text-muted-foreground">
+              Validity: {validity} days from date of issue. FX Rate: {fxRate.toLocaleString()} USD/IQD ({fxDate}).
+            </p>
           </div>
 
           <div className="flex gap-3 mt-4">
