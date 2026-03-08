@@ -1895,7 +1895,7 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
   );
 }
 
-function Step8({ invoices, vendorBills, orderId, quotations, vendors, customers }: any) {
+function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
   const insertPayment = useInsertMutation('payments');
   const updateInvoice = useUpdateMutation('invoices');
   const updateBill = useUpdateMutation('vendor_bills');
