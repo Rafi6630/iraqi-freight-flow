@@ -359,3 +359,70 @@ function QuotationTemplatesTab() {
     </div>
   );
 }
+
+function ExchangeRateSettingsTab() {
+  const { data, isLoading, upsert } = useSettingsRow('exchange_rate_settings');
+  const [form, setForm] = useState<Record<string, any>>({});
+
+  useEffect(() => {
+    if (data) setForm(data);
+  }, [data]);
+
+  const f = (k: string) => form[k] ?? '';
+  const fb = (k: string) => form[k] ?? false;
+  const set = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }));
+
+  if (isLoading) return <div className="erp-metric-card p-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto" /></div>;
+
+  return (
+    <div className="erp-metric-card space-y-4">
+      <h3 className="text-lg font-semibold">Exchange Rate Settings</h3>
+      <p className="text-sm text-muted-foreground">Configure automatic exchange rate updates.</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="flex items-center gap-2 md:col-span-2">
+          <Switch checked={fb('auto_update_enabled')} onCheckedChange={v => set('auto_update_enabled', v)} />
+          <Label>Enable Auto-Update</Label>
+        </div>
+        <div>
+          <Label>Update Frequency</Label>
+          <Select value={f('update_frequency') || 'Daily'} onValueChange={v => set('update_frequency', v)}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="Hourly">Hourly</SelectItem>
+              <SelectItem value="Daily">Daily</SelectItem>
+              <SelectItem value="Weekly">Weekly</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label>API Provider</Label>
+          <Select value={f('api_provider') || ''} onValueChange={v => set('api_provider', v)}>
+            <SelectTrigger><SelectValue placeholder="Select provider" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="exchangerate-api">ExchangeRate-API</SelectItem>
+              <SelectItem value="openexchangerates">Open Exchange Rates</SelectItem>
+              <SelectItem value="currencylayer">CurrencyLayer</SelectItem>
+              <SelectItem value="manual">Manual Only</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="md:col-span-2">
+          <Label>API Key</Label>
+          <Input type="password" value={f('api_key')} onChange={e => set('api_key', e.target.value)} placeholder="Enter API key (if applicable)" />
+        </div>
+        {data?.last_update && (
+          <div className="md:col-span-2 text-sm text-muted-foreground">
+            Last updated: {new Date(data.last_update).toLocaleString()}
+          </div>
+        )}
+      </div>
+      <Button onClick={() => {
+        const { id, created_at, updated_at, ...values } = form;
+        upsert.mutate(values);
+      }} disabled={upsert.isPending}>
+        {upsert.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+        Save Exchange Rate Settings
+      </Button>
+    </div>
+  );
+}
