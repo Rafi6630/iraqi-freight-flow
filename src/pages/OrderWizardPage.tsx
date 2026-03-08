@@ -482,22 +482,27 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, custom
   const employeeIncentiveCosts = costs.filter((c: any) => c.category === 'employee_incentive');
 
   const totalVendorCostUsd = vendorCosts.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
+  const totalVendorCostIqd = vendorCosts.reduce((s: number, c: any) => s + (c.amount_iqd || 0), 0);
   const totalPartnerCommUsd = partnerCommCosts.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
+  const totalPartnerCommIqd = partnerCommCosts.reduce((s: number, c: any) => s + (c.amount_iqd || 0), 0);
   const totalEmployeeIncentiveUsd = employeeIncentiveCosts.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
+  const totalEmployeeIncentiveIqd = employeeIncentiveCosts.reduce((s: number, c: any) => s + (c.amount_iqd || 0), 0);
   const totalCommUsd = totalPartnerCommUsd + totalEmployeeIncentiveUsd;
+  const totalCommIqd = totalPartnerCommIqd + totalEmployeeIncentiveIqd;
+  const totalCostWithCommUsd = totalVendorCostUsd + totalCommUsd;
+  const totalCostWithCommIqd = totalVendorCostIqd + totalCommIqd;
 
-  // === PRICING FORMULA (Section 4.3) ===
-  // Total Profit = Quotation Price - Vendor Costs (excluding commissions)
+  // === PRICING FORMULA ===
   const totalProfit = quotationPriceUsd - totalVendorCostUsd;
-  // Service Fee = 25% of Total Profit
   const serviceFeeUsd = totalProfit * 0.25;
-  // Net Profit = Total Profit - Service Fee (remaining 75%)
   const netProfitUsd = totalProfit - serviceFeeUsd;
-  // Margin % = (Service Fee ÷ Total Vendor Costs) × 100
   const marginPct = totalVendorCostUsd > 0 ? (serviceFeeUsd / totalVendorCostUsd) * 100 : 0;
 
-  // === MARGIN DISTRIBUTION (Section 4.4) ===
-  // Quoted Price per Service = Actual Cost + (Margin% × Actual Cost)
+  // Margin with commissions
+  const profitAfterComm = quotationPriceUsd - totalCostWithCommUsd;
+  const marginWithCommPct = totalCostWithCommUsd > 0 ? ((quotationPriceUsd - totalCostWithCommUsd) / totalCostWithCommUsd) * 100 : 0;
+
+  // Service breakdown
   const serviceBreakdown = vendorCosts.map((c: any) => {
     const costUsd = c.amount_usd || 0;
     const costIqd = c.amount_iqd || 0;
@@ -507,16 +512,12 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, custom
     const quotedIqd = quotedUsd * fxRate;
     return {
       ...c,
-      vendor_cost_usd: costUsd,
-      vendor_cost_iqd: costIqd,
-      service_fee_usd: feeUsd,
-      service_fee_iqd: feeIqd,
-      quoted_price_usd: quotedUsd,
-      quoted_price_iqd: quotedIqd,
+      vendor_cost_usd: costUsd, vendor_cost_iqd: costIqd,
+      service_fee_usd: feeUsd, service_fee_iqd: feeIqd,
+      quoted_price_usd: quotedUsd, quoted_price_iqd: quotedIqd,
     };
   });
 
-  // Final profit after commissions
   const finalProfitUsd = netProfitUsd - totalCommUsd;
 
   // Auto-set price on first render
@@ -629,135 +630,88 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, custom
     <div className="space-y-5">
       <h3 className="text-lg font-semibold">Step 4 — Quotation Generation</h3>
 
-      {/* 4.1 Template Selection */}
+      {/* 1. Total Vendor Cost Summary */}
       <div className="p-4 bg-muted/30 rounded-lg border border-border">
-        <p className="text-sm font-semibold mb-3">📋 Template Selection</p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {quotationTemplates.length > 0 ? (
-            quotationTemplates.map((t: any) => (
-              <button key={t.id} onClick={() => setSelectedTemplateId(t.id)}
-                className={cn('p-3 rounded-lg border text-left transition-all',
-                  selectedTemplateId === t.id ? 'border-primary bg-primary/5 ring-2 ring-primary/20' : 'border-border hover:border-primary/40'
-                )}>
-                <p className="text-sm font-medium">{t.template_name}</p>
-                {t.is_default && <span className="text-xs text-muted-foreground">Default</span>}
-                {t.is_standard && <span className="text-xs text-primary ml-2">Standard</span>}
-              </button>
-            ))
-          ) : (
-            <div className="col-span-3 text-sm text-muted-foreground">No templates found. Using default template. Add templates in Settings.</div>
-          )}
+        <p className="text-sm font-semibold mb-3">📊 Total Vendor Cost</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div>
+            <p className="text-xs text-muted-foreground">Vendor Costs (excl. comm.)</p>
+            <p className="text-base font-semibold">{formatUSD(totalVendorCostUsd)}</p>
+            <p className="text-xs text-muted-foreground">{formatIQD(totalVendorCostIqd)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Partner Commission</p>
+            <p className="text-base font-semibold">{formatUSD(totalPartnerCommUsd)}</p>
+            <p className="text-xs text-muted-foreground">{formatIQD(totalPartnerCommIqd)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Employee Incentive</p>
+            <p className="text-base font-semibold">{formatUSD(totalEmployeeIncentiveUsd)}</p>
+            <p className="text-xs text-muted-foreground">{formatIQD(totalEmployeeIncentiveIqd)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground font-semibold">Total (incl. comm.)</p>
+            <p className="text-base font-bold">{formatUSD(totalCostWithCommUsd)}</p>
+            <p className="text-xs text-muted-foreground">{formatIQD(totalCostWithCommIqd)}</p>
+          </div>
         </div>
       </div>
 
-      {/* 4.2 Pricing Input & FX */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div>
-          <Label>Quotation Price (USD) *</Label>
-          <Input type="number" value={quotationPriceUsd || ''} onChange={e => setQuotationPriceUsd(parseFloat(e.target.value) || 0)} />
-          <p className="text-xs text-muted-foreground mt-1">{formatIQD(quotationPriceUsd * fxRate)}</p>
+      {/* 2. Selling Price, Margin, FX, Validity */}
+      <div className="p-4 bg-muted/30 rounded-lg border border-border">
+        <p className="text-sm font-semibold mb-3">💰 Selling Price & Margin</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div>
+            <Label>Selling Price (USD) *</Label>
+            <Input type="number" value={quotationPriceUsd || ''} onChange={e => setQuotationPriceUsd(parseFloat(e.target.value) || 0)} />
+            <p className="text-xs text-muted-foreground mt-1">{formatIQD(quotationPriceUsd * fxRate)}</p>
+          </div>
+          <div>
+            <Label>FX Date</Label>
+            <Input type="date" value={fxDate} onChange={e => setFxDate(e.target.value)} />
+          </div>
+          <div>
+            <Label>FX Rate (USD/IQD)</Label>
+            <Input type="number" value={fxRateOverride} onChange={e => setFxRateOverride(parseFloat(e.target.value) || DEFAULT_FX_RATE)} />
+            <p className="text-xs text-muted-foreground mt-1">Override allowed</p>
+          </div>
+          <div>
+            <Label>Validity (days)</Label>
+            <Input type="number" value={validity} onChange={e => setValidity(parseInt(e.target.value) || 30)} />
+          </div>
         </div>
-        <div>
-          <Label>FX Date</Label>
-          <Input type="date" value={fxDate} onChange={e => setFxDate(e.target.value)} />
-        </div>
-        <div>
-          <Label>FX Rate (USD/IQD)</Label>
-          <Input type="number" value={fxRateOverride} onChange={e => setFxRateOverride(parseFloat(e.target.value) || DEFAULT_FX_RATE)} />
-          <p className="text-xs text-muted-foreground mt-1">Override allowed</p>
-        </div>
-        <div>
-          <Label>Validity (days)</Label>
-          <Input type="number" value={validity} onChange={e => setValidity(parseInt(e.target.value) || 30)} />
-        </div>
+        {/* Margin display */}
+        {totalVendorCostUsd > 0 && quotationPriceUsd > 0 && (
+          <div className="mt-4 pt-3 border-t border-border grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+            <div>
+              <p className="text-xs text-muted-foreground">Margin (excl. commission)</p>
+              <p className={cn('text-lg font-bold', totalProfit >= 0 ? 'text-[hsl(var(--chart-2))]' : 'text-destructive')}>
+                {Math.round(((quotationPriceUsd - totalVendorCostUsd) / totalVendorCostUsd) * 10000) / 100}%
+              </p>
+              <p className="text-xs">{formatUSD(totalProfit)} | {formatIQD(totalProfit * fxRate)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Margin (incl. commission)</p>
+              <p className={cn('text-lg font-bold', profitAfterComm >= 0 ? 'text-[hsl(var(--chart-2))]' : 'text-destructive')}>
+                {Math.round(marginWithCommPct * 100) / 100}%
+              </p>
+              <p className="text-xs">{formatUSD(profitAfterComm)} | {formatIQD(profitAfterComm * fxRate)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Service Fee (25% of profit)</p>
+              <p className="font-mono font-medium">{formatUSD(serviceFeeUsd)}</p>
+              <p className="text-xs text-muted-foreground">{formatIQD(serviceFeeUsd * fxRate)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Net Profit (75%)</p>
+              <p className="font-mono font-medium">{formatUSD(netProfitUsd)}</p>
+              <p className="text-xs text-muted-foreground">{formatIQD(netProfitUsd * fxRate)}</p>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* 4.6 Automatic Calculations Display */}
-      {totalVendorCostUsd > 0 && quotationPriceUsd > 0 && (
-        <div className="p-4 bg-muted/30 rounded-lg border border-border">
-          <p className="text-sm font-semibold mb-3">🔢 Auto-Calculated Breakdown</p>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
-            <div><span className="text-xs text-muted-foreground">Total Vendor Costs</span><p className="font-mono">{formatUSD(totalVendorCostUsd)} | {formatIQD(totalVendorCostUsd * fxRate)}</p></div>
-            <div><span className="text-xs text-muted-foreground">Total Profit (Price − Vendor Costs)</span><p className={cn('font-mono', totalProfit >= 0 ? 'text-[hsl(var(--success))]' : 'text-destructive')}>{formatUSD(totalProfit)} | {formatIQD(totalProfit * fxRate)}</p></div>
-            <div><span className="text-xs text-muted-foreground">Service Fee (25% of Profit)</span><p className="font-mono">{formatUSD(serviceFeeUsd)} | {formatIQD(serviceFeeUsd * fxRate)}</p></div>
-            <div><span className="text-xs text-muted-foreground">Net Profit (75% of Profit)</span><p className="font-mono">{formatUSD(netProfitUsd)} | {formatIQD(netProfitUsd * fxRate)}</p></div>
-            <div><span className="text-xs text-muted-foreground">Margin % (Service Fee ÷ Vendor Costs)</span><p className="font-mono">{Math.round(marginPct * 100) / 100}%</p></div>
-            <div><span className="text-xs text-muted-foreground">Quotation Price</span><p className="font-mono font-semibold">{formatUSD(quotationPriceUsd)} | {formatIQD(quotationPriceUsd * fxRate)}</p></div>
-          </div>
-        </div>
-      )}
-
-      {/* 4.5 Quotation Table — Customer-facing format */}
-      {serviceBreakdown.length > 0 && (
-        <div className="p-4 bg-muted/30 rounded-lg border border-border">
-          <p className="text-sm font-semibold mb-3">📄 Quotation Table (Customer View)</p>
-          <div className="erp-table-container">
-            <table className="w-full text-sm">
-              <thead><tr className="border-b border-border bg-primary text-primary-foreground">
-                <th className="text-left px-3 py-2">Service</th>
-                <th className="text-right px-3 py-2">Quoted Price USD</th>
-                <th className="text-right px-3 py-2">Quoted Price IQD</th>
-              </tr></thead>
-              <tbody>
-                {serviceBreakdown.map((svc: any, i: number) => (
-                  <tr key={i} className="border-b border-border">
-                    <td className="px-3 py-2">{svc.description || svc.category || 'Service'}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatUSD(svc.quoted_price_usd)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(svc.quoted_price_iqd)}</td>
-                  </tr>
-                ))}
-                {/* Service Fee as separate line item */}
-                <tr className="border-b border-border bg-accent/30">
-                  <td className="px-3 py-2 font-medium">Service Fee</td>
-                  <td className="px-3 py-2 text-right font-mono font-medium">{formatUSD(serviceFeeUsd)}</td>
-                  <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(serviceFeeUsd * fxRate)}</td>
-                </tr>
-                {/* Total */}
-                <tr className="bg-muted/50 font-semibold">
-                  <td className="px-3 py-2">TOTAL</td>
-                  <td className="px-3 py-2 text-right font-mono">{formatUSD(quotationPriceUsd)}</td>
-                  <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(quotationPriceUsd * fxRate)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Internal Breakdown (not shown to customer) */}
-      {serviceBreakdown.length > 0 && (
-        <details className="p-4 bg-muted/30 rounded-lg border border-border">
-          <summary className="text-sm font-semibold cursor-pointer">🔍 Internal Service Breakdown (Vendor Cost | Fee | Quoted)</summary>
-          <div className="erp-table-container mt-3">
-            <table className="w-full text-sm">
-              <thead><tr className="border-b border-border bg-muted/50">
-                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Service</th>
-                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Vendor USD</th>
-                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Vendor IQD</th>
-                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Fee USD</th>
-                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Fee IQD</th>
-                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Quoted USD</th>
-                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Quoted IQD</th>
-              </tr></thead>
-              <tbody>
-                {serviceBreakdown.map((svc: any, i: number) => (
-                  <tr key={i} className="border-b border-border">
-                    <td className="px-3 py-2">{svc.description || svc.category || 'Service'}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatUSD(svc.vendor_cost_usd)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(svc.vendor_cost_iqd)}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatUSD(svc.service_fee_usd)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(svc.service_fee_iqd)}</td>
-                    <td className="px-3 py-2 text-right font-mono font-medium">{formatUSD(svc.quoted_price_usd)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(svc.quoted_price_iqd)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </details>
-      )}
-
-      {/* 4.4 Payment Terms */}
+      {/* 3. Payment Terms */}
       <div className="p-4 bg-muted/30 rounded-lg border border-border">
         <p className="text-sm font-semibold mb-3">💳 Payment Terms</p>
         <table className="w-full text-sm mb-3">
@@ -787,28 +741,84 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, custom
           <Input type="number" placeholder="%" value={newTerm.percentage || ''} onChange={e => setNewTerm(p => ({ ...p, percentage: parseFloat(e.target.value) || 0 }))} className="w-20" />
           <Button variant="outline" size="sm" onClick={addPaymentTerm}><Plus className="w-3 h-3" /></Button>
         </div>
-        <p className={cn('text-xs mt-2 font-medium', totalTermsPct === 100 ? 'text-[hsl(var(--success))]' : 'text-destructive')}>
+        <p className={cn('text-xs mt-2 font-medium', totalTermsPct === 100 ? 'text-[hsl(var(--chart-2))]' : 'text-destructive')}>
           Total: {totalTermsPct}% {totalTermsPct !== 100 && '⚠ Must equal 100%'}
         </p>
       </div>
 
-      {/* 4.7 Additional Fields */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <Label>Quotation Description / Terms & Conditions</Label>
-          <Textarea value={quotationDescription} onChange={e => setQuotationDescription(e.target.value)} rows={3} placeholder="Enter terms and conditions..." />
-        </div>
-        <div className="space-y-3">
-          {quotations.length > 0 && (
-            <div>
-              <Label>Status</Label>
-              <p className="text-sm font-medium mt-1 capitalize">{quotations[0].status}</p>
+      {/* 4. Service Breakdown */}
+      {serviceBreakdown.length > 0 && (
+        <div className="p-4 bg-muted/30 rounded-lg border border-border">
+          <p className="text-sm font-semibold mb-3">📄 Service Breakdown (Customer View)</p>
+          <div className="erp-table-container">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-border bg-primary text-primary-foreground">
+                <th className="text-left px-3 py-2">Service</th>
+                <th className="text-right px-3 py-2">Quoted Price USD</th>
+                <th className="text-right px-3 py-2">Quoted Price IQD</th>
+              </tr></thead>
+              <tbody>
+                {serviceBreakdown.map((svc: any, i: number) => (
+                  <tr key={i} className="border-b border-border">
+                    <td className="px-3 py-2">{svc.description || svc.category || 'Service'}</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatUSD(svc.quoted_price_usd)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(svc.quoted_price_iqd)}</td>
+                  </tr>
+                ))}
+                <tr className="border-b border-border bg-accent/30">
+                  <td className="px-3 py-2 font-medium">Service Fee</td>
+                  <td className="px-3 py-2 text-right font-mono font-medium">{formatUSD(serviceFeeUsd)}</td>
+                  <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(serviceFeeUsd * fxRate)}</td>
+                </tr>
+                <tr className="bg-muted/50 font-semibold">
+                  <td className="px-3 py-2">TOTAL</td>
+                  <td className="px-3 py-2 text-right font-mono">{formatUSD(quotationPriceUsd)}</td>
+                  <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(quotationPriceUsd * fxRate)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Internal Breakdown (collapsible) */}
+          <details className="mt-3">
+            <summary className="text-xs font-semibold cursor-pointer text-muted-foreground">🔍 Internal Breakdown (Vendor Cost | Fee | Quoted)</summary>
+            <div className="erp-table-container mt-2">
+              <table className="w-full text-xs">
+                <thead><tr className="border-b border-border bg-muted/50">
+                  <th className="text-left px-2 py-1 font-medium text-muted-foreground">Service</th>
+                  <th className="text-right px-2 py-1 font-medium text-muted-foreground">Vendor USD</th>
+                  <th className="text-right px-2 py-1 font-medium text-muted-foreground">Vendor IQD</th>
+                  <th className="text-right px-2 py-1 font-medium text-muted-foreground">Fee USD</th>
+                  <th className="text-right px-2 py-1 font-medium text-muted-foreground">Fee IQD</th>
+                  <th className="text-right px-2 py-1 font-medium text-muted-foreground">Quoted USD</th>
+                  <th className="text-right px-2 py-1 font-medium text-muted-foreground">Quoted IQD</th>
+                </tr></thead>
+                <tbody>
+                  {serviceBreakdown.map((svc: any, i: number) => (
+                    <tr key={i} className="border-b border-border">
+                      <td className="px-2 py-1">{svc.description || svc.category || 'Service'}</td>
+                      <td className="px-2 py-1 text-right font-mono">{formatUSD(svc.vendor_cost_usd)}</td>
+                      <td className="px-2 py-1 text-right font-mono text-muted-foreground">{formatIQD(svc.vendor_cost_iqd)}</td>
+                      <td className="px-2 py-1 text-right font-mono">{formatUSD(svc.service_fee_usd)}</td>
+                      <td className="px-2 py-1 text-right font-mono text-muted-foreground">{formatIQD(svc.service_fee_iqd)}</td>
+                      <td className="px-2 py-1 text-right font-mono font-medium">{formatUSD(svc.quoted_price_usd)}</td>
+                      <td className="px-2 py-1 text-right font-mono text-muted-foreground">{formatIQD(svc.quoted_price_iqd)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          )}
+          </details>
         </div>
+      )}
+
+      {/* 5. Quotation Description */}
+      <div className="p-4 bg-muted/30 rounded-lg border border-border">
+        <p className="text-sm font-semibold mb-2">📝 Quotation Description / Terms & Conditions</p>
+        <Textarea value={quotationDescription} onChange={e => setQuotationDescription(e.target.value)} rows={3} placeholder="Enter terms and conditions..." />
       </div>
 
-      {/* 4.9 Quotation Summary */}
+      {/* 6. Quotation Summary */}
       <div className="p-4 bg-primary/5 rounded-lg border border-primary/20">
         <p className="text-sm font-semibold mb-3">📋 Quotation Summary</p>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -820,11 +830,11 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, custom
           <div>
             <p className="text-xs text-muted-foreground">Total Cost (Vendor)</p>
             <p className="text-lg font-semibold">{formatUSD(totalVendorCostUsd)}</p>
-            <p className="text-xs text-muted-foreground">{formatIQD(totalVendorCostUsd * fxRate)}</p>
+            <p className="text-xs text-muted-foreground">{formatIQD(totalVendorCostIqd)}</p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Profit</p>
-            <p className={cn('text-lg font-semibold', totalProfit >= 0 ? 'text-[hsl(var(--success))]' : 'text-destructive')}>{formatUSD(totalProfit)}</p>
+            <p className={cn('text-lg font-semibold', totalProfit >= 0 ? 'text-[hsl(var(--chart-2))]' : 'text-destructive')}>{formatUSD(totalProfit)}</p>
             <p className="text-xs text-muted-foreground">{formatIQD(totalProfit * fxRate)}</p>
           </div>
           <div>
@@ -838,12 +848,35 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, custom
             <p className="text-xs text-muted-foreground">{fxDate}</p>
           </div>
         </div>
-        {/* Detailed breakdown */}
         <div className="mt-3 pt-3 border-t border-primary/10 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-          <div><span className="text-xs text-muted-foreground">Service Fee (25%)</span><p className="font-mono">{formatUSD(serviceFeeUsd)}</p></div>
-          <div><span className="text-xs text-muted-foreground">Net Profit (75%)</span><p className="font-mono">{formatUSD(netProfitUsd)}</p></div>
-          <div><span className="text-xs text-muted-foreground">Commissions</span><p className="font-mono">{formatUSD(totalCommUsd)}</p></div>
-          <div><span className="text-xs text-muted-foreground">Final Profit</span><p className={cn('font-mono font-semibold', finalProfitUsd >= 0 ? 'text-[hsl(var(--success))]' : 'text-destructive')}>{formatUSD(finalProfitUsd)}</p></div>
+          <div><span className="text-xs text-muted-foreground">Service Fee (25%)</span><p className="font-mono">{formatUSD(serviceFeeUsd)}</p><p className="text-xs text-muted-foreground">{formatIQD(serviceFeeUsd * fxRate)}</p></div>
+          <div><span className="text-xs text-muted-foreground">Net Profit (75%)</span><p className="font-mono">{formatUSD(netProfitUsd)}</p><p className="text-xs text-muted-foreground">{formatIQD(netProfitUsd * fxRate)}</p></div>
+          <div><span className="text-xs text-muted-foreground">Commissions</span><p className="font-mono">{formatUSD(totalCommUsd)}</p><p className="text-xs text-muted-foreground">{formatIQD(totalCommIqd)}</p></div>
+          <div><span className="text-xs text-muted-foreground">Final Profit</span><p className={cn('font-mono font-semibold', finalProfitUsd >= 0 ? 'text-[hsl(var(--chart-2))]' : 'text-destructive')}>{formatUSD(finalProfitUsd)}</p><p className="text-xs text-muted-foreground">{formatIQD(finalProfitUsd * fxRate)}</p></div>
+        </div>
+      </div>
+
+      {/* 7. Template Selection */}
+      <div className="p-4 bg-muted/30 rounded-lg border border-border">
+        <p className="text-sm font-semibold mb-3">📋 Template Selection</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {quotationTemplates.length > 0 ? (
+            quotationTemplates.map((t: any) => (
+              <button key={t.id} onClick={() => setSelectedTemplateId(t.id)}
+                className={cn('p-3 rounded-lg border text-left transition-all',
+                  selectedTemplateId === t.id ? 'border-primary bg-primary/5 ring-2 ring-primary/20' : 'border-border hover:border-primary/40'
+                )}>
+                <p className="text-sm font-medium">{t.template_name}</p>
+                <div className="flex gap-2 mt-1">
+                  {t.is_default && <span className="text-xs text-muted-foreground">Default</span>}
+                  {t.is_standard && <span className="text-xs text-primary">Standard</span>}
+                </div>
+                {t.company_slogan && <p className="text-xs text-muted-foreground mt-1">{t.company_slogan}</p>}
+              </button>
+            ))
+          ) : (
+            <div className="col-span-3 text-sm text-muted-foreground">No templates found. Using default template. Add templates in Settings → Templates.</div>
+          )}
         </div>
       </div>
 
@@ -854,7 +887,7 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, custom
         </div>
       )}
 
-      {/* 4.10 Generate, Preview, Download, Send */}
+      {/* Actions: Generate, Preview, Download, Send */}
       <div className="flex flex-wrap gap-3">
         <Button onClick={handleGenerate} disabled={insertQuotation.isPending} size="lg">
           <FileDown className="w-4 h-4 mr-2" />{quotations.length > 0 ? 'Regenerate' : 'Generate'} Quotation PDF
@@ -881,7 +914,6 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, custom
             <DialogTitle>Quotation Preview — {quotations[0]?.quote_no || 'Draft'}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 text-sm">
-            {/* Company & Quotation No */}
             <div className="flex justify-between items-start">
               <div>
                 <p className="text-lg font-bold">{company.company_name || 'FreightFlow Logistics'}</p>
@@ -894,7 +926,6 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, custom
               </div>
             </div>
 
-            {/* Customer Full Info */}
             <div className="p-4 bg-muted/30 rounded-lg">
               <p className="text-xs text-muted-foreground mb-1">Customer</p>
               <p className="font-semibold">{customer.company || customerName}</p>
@@ -904,7 +935,6 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, custom
               {customer.address && <p className="text-xs">Address: {customer.address}{customer.city ? `, ${customer.city}` : ''}</p>}
             </div>
 
-            {/* Order / Shipment Details */}
             <div className="grid grid-cols-2 gap-4 p-4 bg-muted/30 rounded-lg">
               <div><p className="text-xs text-muted-foreground">Order</p><p className="font-medium">{order.order_no}</p></div>
               <div><p className="text-xs text-muted-foreground">Route</p><p>{order.origin_city || order.origin_country} → {order.destination_city || order.destination_country}</p></div>
@@ -912,17 +942,12 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, custom
               <div><p className="text-xs text-muted-foreground">Cargo</p><p>{order.cargo_desc || '—'}</p></div>
               <div><p className="text-xs text-muted-foreground">ETD / ETA</p><p>{order.etd || '—'} → {order.eta || '—'}</p></div>
               {order.container_type && <div><p className="text-xs text-muted-foreground">Container</p><p>{order.container_type}</p></div>}
-              {order.weight && <div><p className="text-xs text-muted-foreground">Weight</p><p>{order.weight} kg</p></div>}
-              {order.packages && <div><p className="text-xs text-muted-foreground">Packages</p><p>{order.packages}</p></div>}
             </div>
 
-            {/* FX Rate */}
             <div className="p-3 bg-muted/30 rounded-lg">
               <p className="text-xs font-semibold">FX Rate: {fxRate.toLocaleString()} USD/IQD — Date: {fxDate}</p>
-              <p className="text-xs text-muted-foreground">FX rate locked at time of creation</p>
             </div>
 
-            {/* Services table — Customer-facing */}
             <table className="w-full text-sm border border-border">
               <thead><tr className="bg-primary text-primary-foreground">
                 <th className="px-3 py-2 text-left">Service</th>
@@ -950,7 +975,6 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, custom
               </tbody>
             </table>
 
-            {/* Payment Terms */}
             <div className="p-3 bg-muted/30 rounded-lg">
               <p className="text-xs font-semibold mb-2">Payment Terms</p>
               {paymentTerms.map((t, i) => (
@@ -958,7 +982,6 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, custom
               ))}
             </div>
 
-            {/* Terms & Conditions */}
             {quotationDescription && (
               <div className="p-3 bg-muted/30 rounded-lg">
                 <p className="text-xs font-semibold mb-1">Terms & Conditions</p>
