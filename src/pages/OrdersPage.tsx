@@ -11,6 +11,33 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 
+const countryCityMap: Record<string, string[]> = {
+  'Iraq': ['Baghdad', 'Basra', 'Erbil', 'Sulaymaniyah', 'Mosul', 'Najaf', 'Karbala', 'Kirkuk', 'Duhok', 'Umm Qasr'],
+  'China': ['Shanghai', 'Shenzhen', 'Guangzhou', 'Ningbo', 'Qingdao', 'Tianjin', 'Xiamen', 'Dalian', 'Beijing', 'Hong Kong'],
+  'Turkey': ['Istanbul', 'Mersin', 'Izmir', 'Ankara', 'Trabzon', 'Iskenderun'],
+  'UAE': ['Dubai', 'Abu Dhabi', 'Sharjah', 'Jebel Ali', 'Fujairah'],
+  'India': ['Mumbai', 'Chennai', 'Nhava Sheva', 'Kolkata', 'Delhi', 'Mundra'],
+  'Saudi Arabia': ['Jeddah', 'Riyadh', 'Dammam', 'Jubail'],
+  'Iran': ['Tehran', 'Bandar Abbas', 'Isfahan', 'Bushehr'],
+  'Jordan': ['Amman', 'Aqaba'],
+  'Kuwait': ['Kuwait City', 'Shuwaikh'],
+  'Oman': ['Muscat', 'Sohar', 'Salalah'],
+  'Bahrain': ['Manama'],
+  'Qatar': ['Doha'],
+  'Egypt': ['Cairo', 'Alexandria', 'Port Said', 'Suez'],
+  'Germany': ['Hamburg', 'Bremen', 'Frankfurt', 'Munich', 'Berlin'],
+  'Netherlands': ['Rotterdam', 'Amsterdam'],
+  'United Kingdom': ['London', 'Felixstowe', 'Southampton', 'Liverpool'],
+  'United States': ['New York', 'Los Angeles', 'Houston', 'Miami', 'Chicago', 'Savannah'],
+  'South Korea': ['Busan', 'Seoul', 'Incheon'],
+  'Japan': ['Tokyo', 'Yokohama', 'Osaka', 'Kobe'],
+  'Malaysia': ['Port Klang', 'Kuala Lumpur', 'Penang'],
+  'Singapore': ['Singapore'],
+  'Pakistan': ['Karachi', 'Lahore', 'Islamabad'],
+  'Lebanon': ['Beirut', 'Tripoli'],
+  'Syria': ['Damascus', 'Latakia'],
+};
+
 const stepLabels: Record<number, string> = {
   1: 'Setup', 2: 'Shipment', 3: 'Cost Sheet', 4: 'Quotation', 5: 'Approval',
   6: 'Execution', 7: 'Invoice', 8: 'Payment', 9: 'Closed',
