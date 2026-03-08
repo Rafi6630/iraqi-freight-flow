@@ -2371,28 +2371,252 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
         <div className="p-3 bg-muted/30 rounded-lg text-sm">
           <div className="flex justify-between"><span className="text-muted-foreground">Total Billed</span><span className="font-mono font-medium">{formatUSD(vendorBills.reduce((s: number, b: any) => s + (b.amount_usd || 0), 0))}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">Total Paid</span><span className="font-mono text-emerald-600">{formatUSD(vendorBills.reduce((s: number, b: any) => s + (b.paid_usd || 0), 0))}</span></div>
-          <div className="flex justify-between border-t border-border pt-1 mt-1"><span className="font-medium">Outstanding AP</span><span className="font-mono font-semibold">{formatUSD(vendorBills.reduce((s: number, b: any) => s + (b.amount_usd || 0) - (b.paid_usd || 0), 0))}</span></div>
+         <div className="flex justify-between border-t border-border pt-1 mt-1"><span className="font-medium">Outstanding AP</span><span className="font-mono font-semibold">{formatUSD(vendorBills.reduce((s: number, b: any) => s + (b.amount_usd || 0) - (b.paid_usd || 0), 0))}</span></div>
         </div>
       </div>
+
+      {/* ==================== FX RECONCILIATION SUMMARY ==================== */}
+      {payments.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 border-b border-border pb-2">
+            <div className="w-7 h-7 rounded-lg bg-purple-100 flex items-center justify-center"><span className="text-sm">💱</span></div>
+            <h4 className="text-base font-semibold">FX Reconciliation Summary</h4>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="p-3 bg-muted/30 rounded-lg">
+              <p className="text-xs text-muted-foreground mb-1">AR FX Gain/Loss</p>
+              {(() => {
+                const arFxTotal = arPayments.reduce((s: number, p: any) => s + (p.fx_gain_loss_usd || 0), 0);
+                return <p className={cn('font-mono font-semibold', arFxTotal > 0 ? 'text-emerald-600' : arFxTotal < 0 ? 'text-destructive' : 'text-muted-foreground')}>{arFxTotal > 0 ? '+' : ''}{formatUSD(arFxTotal)}</p>;
+              })()}
+            </div>
+            <div className="p-3 bg-muted/30 rounded-lg">
+              <p className="text-xs text-muted-foreground mb-1">AP FX Gain/Loss</p>
+              {(() => {
+                const apFxTotal = apPayments.reduce((s: number, p: any) => s + (p.fx_gain_loss_usd || 0), 0);
+                return <p className={cn('font-mono font-semibold', apFxTotal > 0 ? 'text-emerald-600' : apFxTotal < 0 ? 'text-destructive' : 'text-muted-foreground')}>{apFxTotal > 0 ? '+' : ''}{formatUSD(apFxTotal)}</p>;
+              })()}
+            </div>
+            <div className="p-3 bg-muted/30 rounded-lg">
+              <p className="text-xs text-muted-foreground mb-1">Net FX Impact</p>
+              {(() => {
+                const netFx = payments.reduce((s: number, p: any) => s + (p.fx_gain_loss_usd || 0), 0);
+                return <p className={cn('font-mono font-bold text-lg', netFx > 0 ? 'text-emerald-600' : netFx < 0 ? 'text-destructive' : 'text-muted-foreground')}>{netFx > 0 ? '+' : ''}{formatUSD(netFx)}</p>;
+              })()}
+            </div>
+            <div className="p-3 bg-muted/30 rounded-lg">
+              <p className="text-xs text-muted-foreground mb-1">Total Fees Paid</p>
+              <p className="font-mono font-semibold text-amber-600">{formatUSD(payments.reduce((s: number, p: any) => s + (p.payment_fee_usd || 0), 0))}</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function Step9({ order, costs, invoices, onSave }: any) {
+function Step9({ order, costs, invoices, vendorBills, payments, employees, partners, onSave }: any) {
+  const insertCommission = useInsertMutation('commissions');
+  const { data: commissions = [] } = useTableQuery<any>('commissions', { filter: { order_id: order.id } });
+
+  const isLocked = order.status_step >= 9 && order.closed_at;
+
+  // Revenue = sum of invoices
   const revenueUsd = invoices.reduce((s: number, i: any) => s + (i.amount_usd || 0), 0);
-  const costsUsd = costs.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
-  const profitUsd = revenueUsd - costsUsd;
+  const revenueIqd = invoices.reduce((s: number, i: any) => s + (i.amount_iqd || 0), 0);
+
+  // Costs = vendor costs (excluding partner_commission and employee_incentive categories)
+  const vendorCosts = costs.filter((c: any) => c.category !== 'partner_commission' && c.category !== 'employee_incentive');
+  const costsUsd = vendorCosts.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
+  const costsIqd = vendorCosts.reduce((s: number, c: any) => s + (c.amount_iqd || 0), 0);
+
+  // Partner commissions and employee incentives from cost sheet
+  const partnerCommCosts = costs.filter((c: any) => c.category === 'partner_commission');
+  const employeeIncentiveCosts = costs.filter((c: any) => c.category === 'employee_incentive');
+  const commissionsUsd = partnerCommCosts.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0) + employeeIncentiveCosts.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
+  const commissionsIqd = partnerCommCosts.reduce((s: number, c: any) => s + (c.amount_iqd || 0), 0) + employeeIncentiveCosts.reduce((s: number, c: any) => s + (c.amount_iqd || 0), 0);
+
+  // Payment fees
+  const totalFeesUsd = payments.reduce((s: number, p: any) => s + (p.payment_fee_usd || 0), 0);
+
+  // FX gain/loss from all payments
+  const fxGainLossUsd = payments.reduce((s: number, p: any) => s + (p.fx_gain_loss_usd || 0), 0);
+
+  // Net Profit
+  const profitUsd = revenueUsd - costsUsd - commissionsUsd - totalFeesUsd + fxGainLossUsd;
+  const profitIqd = revenueIqd - costsIqd - commissionsIqd;
+  const marginPct = revenueUsd > 0 ? (profitUsd / revenueUsd) * 100 : 0;
+
+  const handleGenerateCommissions = async () => {
+    if (commissions.length > 0) {
+      toast.error('Commissions already generated for this order');
+      return;
+    }
+    const fxRate = DEFAULT_FX_RATE;
+    const fxDate = new Date().toISOString().split('T')[0];
+    let generated = 0;
+
+    // Employee commissions based on responsible employee
+    const employee = employees.find((e: any) => e.id === order.responsible_employee_id);
+    if (employee && (employee.commission_rate_pct || 0) > 0) {
+      const commAmount = profitUsd * (employee.commission_rate_pct / 100);
+      const dual = calculateDualAmount(commAmount, 'USD', fxRate, fxDate);
+      await insertCommission.mutateAsync({
+        order_id: order.id, type: 'employee', person_id: employee.id,
+        rate: employee.commission_rate_pct, rule: 'on_close',
+        amount_usd: dual.amount_usd, amount_iqd: dual.amount_iqd,
+        fx_rate: fxRate, fx_date: fxDate, currency_input: 'USD',
+        status: 'accrued',
+      });
+      generated++;
+    }
+
+    // Partner/broker commissions
+    for (const pc of partnerCommCosts) {
+      const dual = calculateDualAmount(pc.amount_usd, 'USD', fxRate, fxDate);
+      await insertCommission.mutateAsync({
+        order_id: order.id, type: 'partner', person_id: pc.vendor_id || null,
+        rate: null, rule: 'on_close',
+        amount_usd: dual.amount_usd, amount_iqd: dual.amount_iqd,
+        fx_rate: fxRate, fx_date: fxDate, currency_input: 'USD',
+        status: 'accrued',
+      });
+      generated++;
+    }
+
+    if (generated === 0) toast.info('No commission rules found');
+    else toast.success(`${generated} commission(s) generated`);
+  };
+
+  const handleCloseOrder = async () => {
+    if (commissions.length === 0) {
+      toast.error('Generate commissions before closing the order');
+      return;
+    }
+    await onSave({ status_step: 9, closed_at: new Date().toISOString() });
+    toast.success('Order closed and locked');
+  };
 
   return (
-    <div className="space-y-4">
-      <h3 className="text-lg font-semibold">Step 9 — Order Closure</h3>
-      <div className="grid grid-cols-3 gap-4">
-        <div className="p-4 bg-muted/30 rounded-lg"><p className="text-xs text-muted-foreground">Revenue</p><CurrencyDisplay usd={revenueUsd} iqd={revenueUsd * DEFAULT_FX_RATE} size="md" layout="stacked" /></div>
-        <div className="p-4 bg-muted/30 rounded-lg"><p className="text-xs text-muted-foreground">Costs</p><CurrencyDisplay usd={costsUsd} iqd={costsUsd * DEFAULT_FX_RATE} size="md" layout="stacked" /></div>
-        <div className="p-4 bg-muted/30 rounded-lg"><p className="text-xs text-muted-foreground">Net Profit</p><CurrencyDisplay usd={profitUsd} iqd={profitUsd * DEFAULT_FX_RATE} size="md" layout="stacked" /></div>
+    <div className="space-y-6">
+      <h3 className="text-lg font-semibold flex items-center gap-2">
+        Step 9 — Order Closure
+        {isLocked && <Lock className="w-4 h-4 text-amber-500" />}
+      </h3>
+
+      {/* P&L Breakdown */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 border-b border-border pb-2">
+          <h4 className="text-base font-semibold">📊 Final Profit & Loss</h4>
+        </div>
+        <div className="p-4 bg-muted/30 rounded-lg border border-border space-y-2 text-sm">
+          <div className="flex justify-between"><span className="text-muted-foreground">Revenue (Invoices)</span><span className="font-mono font-medium">{formatUSD(revenueUsd)} | {formatIQD(revenueIqd)}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">− Vendor Costs</span><span className="font-mono">{formatUSD(costsUsd)} | {formatIQD(costsIqd)}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">− Commissions & Incentives</span><span className="font-mono">{formatUSD(commissionsUsd)} | {formatIQD(commissionsIqd)}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">− Payment Fees</span><span className="font-mono">{formatUSD(totalFeesUsd)}</span></div>
+          <div className="flex justify-between"><span className={cn('text-muted-foreground', fxGainLossUsd >= 0 ? 'text-emerald-600' : 'text-destructive')}>+ FX Gain/Loss</span><span className={cn('font-mono', fxGainLossUsd >= 0 ? 'text-emerald-600' : 'text-destructive')}>{fxGainLossUsd >= 0 ? '+' : ''}{formatUSD(fxGainLossUsd)}</span></div>
+          <div className="flex justify-between border-t border-border pt-2 mt-2">
+            <span className="font-semibold text-base">Net Profit</span>
+            <span className={cn('font-mono font-bold text-xl', profitUsd >= 0 ? 'text-emerald-600' : 'text-destructive')}>{formatUSD(profitUsd)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">IQD equivalent</span>
+            <span className="font-mono text-muted-foreground">{formatIQD(profitIqd)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Profit Margin</span>
+            <span className={cn('font-mono font-medium', marginPct >= 0 ? 'text-emerald-600' : 'text-destructive')}>{marginPct.toFixed(1)}%</span>
+          </div>
+        </div>
       </div>
-      {order.status_step < 9 && <Button variant="destructive" onClick={() => onSave({ status_step: 9, closed_at: new Date().toISOString() })}>Close Order & Lock</Button>}
-      {order.status_step === 9 && <p className="text-sm text-accent-foreground bg-accent p-3 rounded-lg">✅ Order closed on {order.closed_at?.split('T')[0]}</p>}
+
+      {/* Metric Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="p-4 bg-primary/5 rounded-lg border border-primary/20">
+          <p className="text-xs text-muted-foreground">Revenue</p>
+          <p className="text-lg font-bold text-primary">{formatUSD(revenueUsd)}</p>
+          <p className="text-xs text-muted-foreground">{formatIQD(revenueIqd)}</p>
+        </div>
+        <div className="p-4 bg-amber-50 rounded-lg border border-amber-200">
+          <p className="text-xs text-muted-foreground">Total Costs</p>
+          <p className="text-lg font-bold">{formatUSD(costsUsd + commissionsUsd + totalFeesUsd)}</p>
+          <p className="text-xs text-muted-foreground">Vendor + Commissions + Fees</p>
+        </div>
+        <div className="p-4 bg-purple-50 rounded-lg border border-purple-200">
+          <p className="text-xs text-muted-foreground">FX Impact</p>
+          <p className={cn('text-lg font-bold', fxGainLossUsd >= 0 ? 'text-emerald-600' : 'text-destructive')}>{fxGainLossUsd >= 0 ? '+' : ''}{formatUSD(fxGainLossUsd)}</p>
+        </div>
+        <div className={cn('p-4 rounded-lg border', profitUsd >= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200')}>
+          <p className="text-xs text-muted-foreground">Net Profit</p>
+          <p className={cn('text-lg font-bold', profitUsd >= 0 ? 'text-emerald-600' : 'text-destructive')}>{formatUSD(profitUsd)}</p>
+          <p className="text-xs text-muted-foreground">{marginPct.toFixed(1)}% margin</p>
+        </div>
+      </div>
+
+      {/* Commissions Section */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between border-b border-border pb-2">
+          <h4 className="text-base font-semibold">🤝 Commission Generation</h4>
+          {!isLocked && commissions.length === 0 && (
+            <Button onClick={handleGenerateCommissions} disabled={insertCommission.isPending} size="sm">
+              <RefreshCw className="w-4 h-4 mr-1" />Generate Commissions
+            </Button>
+          )}
+        </div>
+
+        {commissions.length === 0 ? (
+          <p className="text-sm text-muted-foreground p-3 bg-muted/30 rounded-lg">No commissions generated yet. Click "Generate Commissions" to auto-create commission entries based on employee rates and broker agreements.</p>
+        ) : (
+          <div className="erp-table-container">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-border bg-muted/50">
+                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Type</th>
+                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Person</th>
+                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Rate</th>
+                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Amount</th>
+                <th className="text-center px-3 py-2 font-medium text-muted-foreground">Status</th>
+              </tr></thead>
+              <tbody>
+                {commissions.map((c: any) => {
+                  const personName = c.type === 'employee'
+                    ? employees.find((e: any) => e.id === c.person_id)?.name || '—'
+                    : partners.find((p: any) => p.id === c.person_id)?.company || '—';
+                  return (
+                    <tr key={c.id} className="border-b border-border">
+                      <td className="px-3 py-2"><StatusBadge status={c.type} /></td>
+                      <td className="px-3 py-2">{personName}</td>
+                      <td className="px-3 py-2 text-right font-mono">{c.rate ? `${c.rate}%` : '—'}</td>
+                      <td className="px-3 py-2 text-right"><CurrencyDisplay usd={c.amount_usd} iqd={c.amount_iqd} size="sm" /></td>
+                      <td className="px-3 py-2 text-center"><StatusBadge status={c.status} /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Close Order Action */}
+      <div className="p-4 rounded-lg border border-border bg-muted/20 space-y-3">
+        {isLocked ? (
+          <div className="flex items-center gap-3 text-sm">
+            <Lock className="w-5 h-5 text-amber-500" />
+            <div>
+              <p className="font-semibold text-foreground">✅ Order Closed</p>
+              <p className="text-muted-foreground">Closed on {order.closed_at?.split('T')[0]}. This order is locked from further modifications.</p>
+            </div>
+          </div>
+        ) : (
+          <>
+            <p className="text-sm text-muted-foreground">Closing the order will lock it from further modifications. Ensure all payments are reconciled and commissions are generated.</p>
+            <Button variant="destructive" onClick={handleCloseOrder} disabled={commissions.length === 0} size="lg">
+              <Lock className="w-4 h-4 mr-2" />Close Order & Lock
+            </Button>
+            {commissions.length === 0 && <p className="text-xs text-amber-600">⚠ Generate commissions before closing</p>}
+          </>
+        )}
+      </div>
     </div>
   );
 }
