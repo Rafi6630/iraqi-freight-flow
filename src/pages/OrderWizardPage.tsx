@@ -1681,9 +1681,22 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
               <div>
                 <Label className="text-xs">Vendor</Label>
                 <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={manualBillVendorId} onChange={e => {
-                  setManualBillVendorId(e.target.value);
-                  const v = vendors.find((v: any) => v.id === e.target.value);
+                  const vid = e.target.value;
+                  setManualBillVendorId(vid);
+                  const v = vendors.find((v: any) => v.id === vid);
                   if (v?.payment_terms_days) setManualBillDueDate(new Date(Date.now() + v.payment_terms_days * 86400000).toISOString().split('T')[0]);
+                  // Auto-populate line items from vendor costs
+                  const vCosts = vendorCosts.filter((c: any) => c.vendor_id === vid);
+                  if (vCosts.length > 0) {
+                    setManualBillLineItems(vCosts.map((c: any) => ({
+                      description: c.description || c.category || 'Service',
+                      qty: 1,
+                      unit: 'Service',
+                      unitCost: c.amount_usd || 0,
+                    })));
+                  } else {
+                    setManualBillLineItems([{ description: '', qty: 1, unit: 'Service', unitCost: 0 }]);
+                  }
                 }}>
                   <option value="">Select vendor...</option>
                   {vendors.map((v: any) => <option key={v.id} value={v.id}>{v.company}</option>)}
