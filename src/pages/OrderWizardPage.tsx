@@ -142,7 +142,7 @@ export default function OrderWizardPage() {
         {currentStep === 5 && <Step5 quotations={quotations} />}
         {currentStep === 6 && <Step6 order={order} onSave={saveOrderField} />}
         {currentStep === 7 && <Step7 order={order} quotations={quotations} costs={costs} invoices={invoices} vendorBills={vendorBills} insertInvoice={insertInvoice} insertBill={insertBill} customerName={customerName} vendors={vendors} payments={payments} customers={customers} employees={employees} partners={partners} companySettings={companySettings} />}
-        {currentStep === 8 && <Step8 invoices={invoices} vendorBills={vendorBills} orderId={order.id} />}
+        {currentStep === 8 && <Step8 invoices={invoices} vendorBills={vendorBills} orderId={order.id} quotations={quotations} vendors={vendors} customers={customers} />}
         {currentStep === 9 && <Step9 order={order} costs={costs} invoices={invoices} onSave={saveOrderField} />}
       </div>
 
@@ -1887,173 +1887,428 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
   );
 }
 
-function Step8({ invoices, vendorBills, orderId }: any) {
+function Step8({ invoices, vendorBills, orderId, quotations, vendors, customers }: any) {
   const insertPayment = useInsertMutation('payments');
   const updateInvoice = useUpdateMutation('invoices');
   const updateBill = useUpdateMutation('vendor_bills');
   const { data: payments = [] } = useTableQuery<any>('payments', { filter: { order_id: orderId } });
 
-  const [payForm, setPayForm] = useState({
-    direction: 'AR' as 'AR' | 'AP',
+  const arPayments = payments.filter((p: any) => p.direction === 'AR');
+  const apPayments = payments.filter((p: any) => p.direction === 'AP');
+
+  // Get quotation payment terms for AR installments
+  const quotation = quotations?.[0];
+  const { data: quotationPaymentTerms = [] } = useQuery({
+    queryKey: ['quotation_payment_terms_step8', quotation?.id],
+    queryFn: async () => {
+      if (!quotation?.id) return [];
+      const { data, error } = await (supabase.from('quotation_payment_terms') as any).select('*').eq('quotation_id', quotation.id);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!quotation?.id,
+  });
+
+  // AR payment form
+  const [arForm, setArForm] = useState({
+    ref_id: '',
+    term_index: 0,
+    amount_usd: 0,
+    currency_input: 'USD',
+    method: 'bank_transfer',
+    reference: '',
+    pay_fx_rate: DEFAULT_FX_RATE,
+    date: new Date().toISOString().split('T')[0],
+  });
+
+  // AP payment form
+  const [apForm, setApForm] = useState({
     ref_id: '',
     amount_usd: 0,
     currency_input: 'USD',
     method: 'bank_transfer',
     reference: '',
     pay_fx_rate: DEFAULT_FX_RATE,
+    date: new Date().toISOString().split('T')[0],
   });
-  const setPay = (k: string, v: any) => setPayForm(p => ({ ...p, [k]: v }));
 
-  const selectedDoc = payForm.direction === 'AR'
-    ? invoices.find((i: any) => i.id === payForm.ref_id)
-    : vendorBills.find((b: any) => b.id === payForm.ref_id);
+  const setAr = (k: string, v: any) => setArForm(p => ({ ...p, [k]: v }));
+  const setAp = (k: string, v: any) => setApForm(p => ({ ...p, [k]: v }));
 
-  const docFxRate = selectedDoc?.fx_rate || DEFAULT_FX_RATE;
-  const payFxRate = payForm.pay_fx_rate;
-  const dual = calculateDualAmount(payForm.amount_usd, payForm.currency_input as any, payFxRate, new Date().toISOString().split('T')[0]);
+  const selectedInvoice = invoices.find((i: any) => i.id === arForm.ref_id);
+  const selectedBill = vendorBills.find((b: any) => b.id === apForm.ref_id);
 
-  // FX gain/loss calc
-  const fxDiffIqd = payForm.amount_usd * payFxRate - payForm.amount_usd * docFxRate;
-  const fxGainLossUsd = payFxRate > 0 ? Math.round((fxDiffIqd / payFxRate) * 100) / 100 : 0;
-  const fxGainLossIqd = Math.round(fxDiffIqd);
+  // AR FX calc
+  const arDocFxRate = selectedInvoice?.fx_rate || DEFAULT_FX_RATE;
+  const arDual = calculateDualAmount(arForm.amount_usd, arForm.currency_input as any, arForm.pay_fx_rate, arForm.date);
+  const arFxDiffIqd = arForm.amount_usd * arForm.pay_fx_rate - arForm.amount_usd * arDocFxRate;
+  const arFxGainLossUsd = arForm.pay_fx_rate > 0 ? Math.round((arFxDiffIqd / arForm.pay_fx_rate) * 100) / 100 : 0;
 
-  const handleRecordPayment = async () => {
-    if (!payForm.ref_id || payForm.amount_usd <= 0) { toast.error('Select document and enter amount'); return; }
-    const year = new Date().getFullYear();
-    const payNo = `PAY-${year}-${String(payments.length + 1).padStart(4, '0')}`;
+  // AP FX calc
+  const apDocFxRate = selectedBill?.fx_rate || DEFAULT_FX_RATE;
+  const apDual = calculateDualAmount(apForm.amount_usd, apForm.currency_input as any, apForm.pay_fx_rate, apForm.date);
+  const apFxDiffIqd = apForm.amount_usd * apForm.pay_fx_rate - apForm.amount_usd * apDocFxRate;
+  const apFxGainLossUsd = apForm.pay_fx_rate > 0 ? Math.round((apFxDiffIqd / apForm.pay_fx_rate) * 100) / 100 : 0;
+
+  const handleRecordARPayment = async () => {
+    if (!arForm.ref_id || arForm.amount_usd <= 0) { toast.error('Select invoice and enter amount'); return; }
+    const payNo = `PAY-${new Date().getFullYear()}-${String(payments.length + 1).padStart(4, '0')}`;
     await insertPayment.mutateAsync({
-      pay_no: payNo,
-      order_id: orderId,
-      direction: payForm.direction,
-      ref_type: payForm.direction === 'AR' ? 'invoice' : 'bill',
-      ref_id: payForm.ref_id,
-      counterparty_id: selectedDoc?.customer_id || selectedDoc?.vendor_id || null,
-      amount_usd: dual.amount_usd,
-      amount_iqd: dual.amount_iqd,
-      fx_rate: payFxRate,
-      fx_date: new Date().toISOString().split('T')[0],
-      currency_input: payForm.currency_input,
-      pay_currency: payForm.currency_input,
-      is_fx_locked: true,
-      date: new Date().toISOString().split('T')[0],
-      method: payForm.method,
-      reference: payForm.reference,
-      fx_gain_loss_usd: fxGainLossUsd,
-      fx_gain_loss_iqd: fxGainLossIqd,
+      pay_no: payNo, order_id: orderId, direction: 'AR', ref_type: 'invoice',
+      ref_id: arForm.ref_id, counterparty_id: selectedInvoice?.customer_id || null,
+      amount_usd: arDual.amount_usd, amount_iqd: arDual.amount_iqd,
+      fx_rate: arForm.pay_fx_rate, fx_date: arForm.date, currency_input: arForm.currency_input,
+      pay_currency: arForm.currency_input, is_fx_locked: true, date: arForm.date,
+      method: arForm.method, reference: arForm.reference,
+      fx_gain_loss_usd: arFxGainLossUsd, fx_gain_loss_iqd: Math.round(arFxDiffIqd),
     });
-
-    // Update paid amounts on the document
-    if (payForm.direction === 'AR' && selectedDoc) {
+    if (selectedInvoice) {
+      const newPaid = (selectedInvoice.paid_usd || 0) + arDual.amount_usd;
       await updateInvoice.mutateAsync({
-        id: selectedDoc.id,
-        paid_usd: (selectedDoc.paid_usd || 0) + dual.amount_usd,
-        paid_iqd: (selectedDoc.paid_iqd || 0) + dual.amount_iqd,
-        status: (selectedDoc.paid_usd || 0) + dual.amount_usd >= selectedDoc.amount_usd ? 'paid' : 'partial',
-      });
-    } else if (selectedDoc) {
-      await updateBill.mutateAsync({
-        id: selectedDoc.id,
-        paid_usd: (selectedDoc.paid_usd || 0) + dual.amount_usd,
-        paid_iqd: (selectedDoc.paid_iqd || 0) + dual.amount_iqd,
-        status: (selectedDoc.paid_usd || 0) + dual.amount_usd >= selectedDoc.amount_usd ? 'paid' : 'partial',
+        id: selectedInvoice.id,
+        paid_usd: newPaid, paid_iqd: (selectedInvoice.paid_iqd || 0) + arDual.amount_iqd,
+        status: newPaid >= selectedInvoice.amount_usd ? 'paid' : 'partial',
       });
     }
+    setArForm(p => ({ ...p, ref_id: '', amount_usd: 0, reference: '' }));
+    toast.success('AR payment recorded');
+  };
 
-    setPayForm(p => ({ ...p, ref_id: '', amount_usd: 0, reference: '' }));
-    toast.success('Payment recorded');
+  const handleRecordAPPayment = async () => {
+    if (!apForm.ref_id || apForm.amount_usd <= 0) { toast.error('Select bill and enter amount'); return; }
+    const payNo = `PAY-${new Date().getFullYear()}-${String(payments.length + 1).padStart(4, '0')}`;
+    await insertPayment.mutateAsync({
+      pay_no: payNo, order_id: orderId, direction: 'AP', ref_type: 'bill',
+      ref_id: apForm.ref_id, counterparty_id: selectedBill?.vendor_id || null,
+      amount_usd: apDual.amount_usd, amount_iqd: apDual.amount_iqd,
+      fx_rate: apForm.pay_fx_rate, fx_date: apForm.date, currency_input: apForm.currency_input,
+      pay_currency: apForm.currency_input, is_fx_locked: true, date: apForm.date,
+      method: apForm.method, reference: apForm.reference,
+      fx_gain_loss_usd: apFxGainLossUsd, fx_gain_loss_iqd: Math.round(apFxDiffIqd),
+    });
+    if (selectedBill) {
+      const newPaid = (selectedBill.paid_usd || 0) + apDual.amount_usd;
+      await updateBill.mutateAsync({
+        id: selectedBill.id,
+        paid_usd: newPaid, paid_iqd: (selectedBill.paid_iqd || 0) + apDual.amount_iqd,
+        status: newPaid >= selectedBill.amount_usd ? 'paid' : 'partial',
+      });
+    }
+    setApForm(p => ({ ...p, ref_id: '', amount_usd: 0, reference: '' }));
+    toast.success('AP payment recorded');
+  };
+
+  // Build installment schedule for each invoice
+  const buildInstallments = (inv: any) => {
+    if (!quotationPaymentTerms.length) return [];
+    const invArPayments = arPayments.filter((p: any) => p.ref_id === inv.id);
+    let cumulativePaid = 0;
+    return quotationPaymentTerms.map((term: any, idx: number) => {
+      const termAmountUsd = inv.amount_usd * ((term.percentage || 0) / 100);
+      const allocated = Math.min(termAmountUsd, Math.max(0, invArPayments.reduce((s: number, p: any) => s + p.amount_usd, 0) - cumulativePaid));
+      cumulativePaid += termAmountUsd;
+      const paidForTerm = Math.min(termAmountUsd, Math.max(0, (inv.paid_usd || 0) - (idx > 0 ? quotationPaymentTerms.slice(0, idx).reduce((s: any, t: any) => s + inv.amount_usd * ((t.percentage || 0) / 100), 0) : 0)));
+      const status = paidForTerm >= termAmountUsd ? 'paid' : paidForTerm > 0 ? 'partial' : 'pending';
+      return { ...term, termAmountUsd, paidForTerm, status, idx };
+    });
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <h3 className="text-lg font-semibold">Step 8 — Payment Processing</h3>
 
-      {/* Outstanding summary */}
-      <div className="grid grid-cols-2 gap-4">
-        {invoices.map((inv: any) => (
-          <div key={inv.id} className="p-4 bg-muted/30 rounded-lg">
-            <p className="text-xs text-muted-foreground mb-1">AR: {inv.invoice_no}</p>
-            <CurrencyDisplay usd={(inv.amount_usd || 0) - (inv.paid_usd || 0)} iqd={(inv.amount_iqd || 0) - (inv.paid_iqd || 0)} size="md" layout="stacked" />
-            <p className="text-xs mt-1 text-muted-foreground">Doc FX: {inv.fx_rate}</p>
+      {/* ==================== AR SECTION ==================== */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 border-b border-border pb-2">
+          <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center"><span className="text-sm font-bold text-primary">AR</span></div>
+          <h4 className="text-base font-semibold">Accounts Receivable — Customer Payments</h4>
+        </div>
+
+        {/* Invoice cards with installment schedule */}
+        {invoices.map((inv: any) => {
+          const customer = customers?.find((c: any) => c.id === inv.customer_id);
+          const dueUsd = (inv.amount_usd || 0) - (inv.paid_usd || 0);
+          const installments = buildInstallments(inv);
+          const invPayments = arPayments.filter((p: any) => p.ref_id === inv.id);
+
+          return (
+            <div key={inv.id} className="border border-border rounded-lg overflow-hidden">
+              <div className="p-4 flex justify-between items-start">
+                <div>
+                  <p className="font-mono font-semibold">{inv.invoice_no}</p>
+                  <p className="text-xs text-muted-foreground">Customer: {customer?.company || '—'}</p>
+                  <p className="text-xs text-muted-foreground">Issued: {inv.issued_date} • Due: {inv.due_date}</p>
+                </div>
+                <div className="text-right space-y-1">
+                  <StatusBadge status={dueUsd <= 0 ? 'paid' : (inv.paid_usd || 0) > 0 ? 'partial' : 'issued'} />
+                  <p className="text-lg font-bold text-primary">{formatUSD(inv.amount_usd)}</p>
+                  <p className="text-xs">Paid: <span className="text-emerald-600 font-medium">{formatUSD(inv.paid_usd || 0)}</span> | Due: <span className="font-medium">{formatUSD(dueUsd)}</span></p>
+                </div>
+              </div>
+
+              {/* Installment Schedule */}
+              {installments.length > 0 && (
+                <div className="border-t border-border px-4 py-3 bg-muted/20">
+                  <p className="text-xs font-semibold text-muted-foreground mb-2">📋 Payment Terms Schedule</p>
+                  <table className="w-full text-xs">
+                    <thead><tr className="border-b border-border">
+                      <th className="text-left py-1 font-medium text-muted-foreground">Term</th>
+                      <th className="text-left py-1 font-medium text-muted-foreground">Description</th>
+                      <th className="text-right py-1 font-medium text-muted-foreground">%</th>
+                      <th className="text-right py-1 font-medium text-muted-foreground">Amount</th>
+                      <th className="text-right py-1 font-medium text-muted-foreground">Paid</th>
+                      <th className="text-center py-1 font-medium text-muted-foreground">Status</th>
+                    </tr></thead>
+                    <tbody>
+                      {installments.map((inst: any) => (
+                        <tr key={inst.id} className="border-b border-border">
+                          <td className="py-1.5">#{inst.idx + 1}</td>
+                          <td className="py-1.5 text-muted-foreground">{inst.description || `Installment ${inst.idx + 1}`}</td>
+                          <td className="py-1.5 text-right font-mono">{inst.percentage}%</td>
+                          <td className="py-1.5 text-right font-mono">{formatUSD(inst.termAmountUsd)}</td>
+                          <td className="py-1.5 text-right font-mono text-emerald-600">{formatUSD(inst.paidForTerm)}</td>
+                          <td className="py-1.5 text-center"><StatusBadge status={inst.status} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* AR Payments for this invoice */}
+              {invPayments.length > 0 && (
+                <div className="border-t border-border px-4 py-3">
+                  <p className="text-xs font-semibold text-muted-foreground mb-2">Payment History</p>
+                  <table className="w-full text-xs">
+                    <thead><tr className="border-b border-border">
+                      <th className="text-left py-1 font-medium text-muted-foreground">Pay #</th>
+                      <th className="text-left py-1 font-medium text-muted-foreground">Date</th>
+                      <th className="text-right py-1 font-medium text-muted-foreground">Amount</th>
+                      <th className="text-left py-1 font-medium text-muted-foreground">Method</th>
+                      <th className="text-right py-1 font-medium text-muted-foreground">FX G/L</th>
+                    </tr></thead>
+                    <tbody>
+                      {invPayments.map((p: any) => (
+                        <tr key={p.id} className="border-b border-border">
+                          <td className="py-1 font-mono">{p.pay_no}</td>
+                          <td className="py-1 text-muted-foreground">{p.date}</td>
+                          <td className="py-1 text-right"><CurrencyDisplay usd={p.amount_usd} iqd={p.amount_iqd} size="sm" /></td>
+                          <td className="py-1 capitalize">{p.method?.replace('_', ' ')}</td>
+                          <td className="py-1 text-right"><span className={(p.fx_gain_loss_usd || 0) >= 0 ? 'fx-gain' : 'fx-loss'}>{formatUSD(Math.abs(p.fx_gain_loss_usd || 0))}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* AR Record Payment Form */}
+        {invoices.some((i: any) => (i.amount_usd || 0) > (i.paid_usd || 0)) && (
+          <div className="p-4 bg-primary/5 rounded-lg border border-primary/20 space-y-3">
+            <p className="text-sm font-semibold">💰 Record AR Payment (Customer → You)</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div>
+                <Label className="text-xs">Invoice</Label>
+                <Select value={arForm.ref_id} onValueChange={v => {
+                  setAr('ref_id', v);
+                  const inv = invoices.find((i: any) => i.id === v);
+                  if (inv) setAr('pay_fx_rate', inv.fx_rate || DEFAULT_FX_RATE);
+                }}>
+                  <SelectTrigger><SelectValue placeholder="Select invoice..." /></SelectTrigger>
+                  <SelectContent>
+                    {invoices.filter((i: any) => (i.amount_usd || 0) > (i.paid_usd || 0)).map((i: any) => (
+                      <SelectItem key={i.id} value={i.id}>{i.invoice_no} ({formatUSD(i.amount_usd - (i.paid_usd || 0))} due)</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Amount USD</Label>
+                <Input type="number" value={arForm.amount_usd || ''} onChange={e => setAr('amount_usd', parseFloat(e.target.value) || 0)} />
+              </div>
+              <div>
+                <Label className="text-xs">Payment FX Rate</Label>
+                <Input type="number" value={arForm.pay_fx_rate} onChange={e => setAr('pay_fx_rate', parseFloat(e.target.value) || DEFAULT_FX_RATE)} />
+              </div>
+              <div>
+                <Label className="text-xs">Date</Label>
+                <Input type="date" value={arForm.date} onChange={e => setAr('date', e.target.value)} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div>
+                <Label className="text-xs">Method</Label>
+                <Select value={arForm.method} onValueChange={v => setAr('method', v)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                    <SelectItem value="cash">Cash</SelectItem>
+                    <SelectItem value="check">Check</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Reference #</Label>
+                <Input value={arForm.reference} onChange={e => setAr('reference', e.target.value)} placeholder="Transaction ref..." />
+              </div>
+              <div className="col-span-2 flex items-center gap-4 pt-4">
+                <span className="text-sm text-muted-foreground">IQD: {formatIQD(arDual.amount_iqd)}</span>
+                {selectedInvoice && arForm.amount_usd > 0 && (
+                  <span className={`text-sm font-medium ${arFxGainLossUsd >= 0 ? 'fx-gain' : 'fx-loss'}`}>
+                    FX {arFxGainLossUsd >= 0 ? 'Gain' : 'Loss'}: {formatUSD(Math.abs(arFxGainLossUsd))}
+                  </span>
+                )}
+              </div>
+            </div>
+            <Button onClick={handleRecordARPayment} disabled={insertPayment.isPending}>
+              <Plus className="w-4 h-4 mr-2" />Record AR Payment
+            </Button>
           </div>
-        ))}
-        {vendorBills.map((bill: any) => (
-          <div key={bill.id} className="p-4 bg-muted/30 rounded-lg">
-            <p className="text-xs text-muted-foreground mb-1">AP: {bill.bill_no}</p>
-            <CurrencyDisplay usd={(bill.amount_usd || 0) - (bill.paid_usd || 0)} iqd={(bill.amount_iqd || 0) - (bill.paid_iqd || 0)} size="md" layout="stacked" />
-            <p className="text-xs mt-1 text-muted-foreground">Doc FX: {bill.fx_rate}</p>
-          </div>
-        ))}
+        )}
+
+        {/* AR Summary */}
+        <div className="p-3 bg-muted/30 rounded-lg text-sm">
+          <div className="flex justify-between"><span className="text-muted-foreground">Total Invoiced</span><span className="font-mono font-medium">{formatUSD(invoices.reduce((s: number, i: any) => s + (i.amount_usd || 0), 0))}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Total Received</span><span className="font-mono text-emerald-600">{formatUSD(invoices.reduce((s: number, i: any) => s + (i.paid_usd || 0), 0))}</span></div>
+          <div className="flex justify-between border-t border-border pt-1 mt-1"><span className="font-medium">Outstanding AR</span><span className="font-mono font-semibold">{formatUSD(invoices.reduce((s: number, i: any) => s + (i.amount_usd || 0) - (i.paid_usd || 0), 0))}</span></div>
+        </div>
       </div>
 
-      {/* Record payment form */}
-      <div className="p-4 bg-muted/30 rounded-lg space-y-3">
-        <p className="text-sm font-medium">Record Payment</p>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Select value={payForm.direction} onValueChange={v => { setPay('direction', v); setPay('ref_id', ''); }}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="AR">AR (Customer)</SelectItem><SelectItem value="AP">AP (Vendor)</SelectItem></SelectContent>
-          </Select>
-          <Select value={payForm.ref_id} onValueChange={v => setPay('ref_id', v)}>
-            <SelectTrigger><SelectValue placeholder="Select document" /></SelectTrigger>
-            <SelectContent>
-              {payForm.direction === 'AR'
-                ? invoices.map((i: any) => <SelectItem key={i.id} value={i.id}>{i.invoice_no} ({formatUSD(i.amount_usd - (i.paid_usd || 0))} remaining)</SelectItem>)
-                : vendorBills.map((b: any) => <SelectItem key={b.id} value={b.id}>{b.bill_no} ({formatUSD(b.amount_usd - (b.paid_usd || 0))} remaining)</SelectItem>)
-              }
-            </SelectContent>
-          </Select>
-          <Input type="number" placeholder="Amount USD" value={payForm.amount_usd || ''} onChange={e => setPay('amount_usd', parseFloat(e.target.value) || 0)} />
-          <Input type="number" placeholder="Payment FX Rate" value={payForm.pay_fx_rate} onChange={e => setPay('pay_fx_rate', parseFloat(e.target.value) || DEFAULT_FX_RATE)} />
+      {/* ==================== AP SECTION ==================== */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 border-b border-border pb-2">
+          <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center"><span className="text-sm font-bold text-amber-700">AP</span></div>
+          <h4 className="text-base font-semibold">Accounts Payable — Vendor Payments</h4>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Select value={payForm.method} onValueChange={v => setPay('method', v)}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="bank_transfer">Bank Transfer</SelectItem><SelectItem value="cash">Cash</SelectItem><SelectItem value="check">Check</SelectItem></SelectContent>
-          </Select>
-          <Input placeholder="Reference #" value={payForm.reference} onChange={e => setPay('reference', e.target.value)} />
-          <div className="col-span-2 flex items-center gap-4">
-            <span className="text-sm text-muted-foreground">
-              IQD: {formatIQD(dual.amount_iqd)}
-            </span>
-            {selectedDoc && (
-              <span className={`text-sm font-medium ${fxGainLossUsd >= 0 ? 'fx-gain' : 'fx-loss'}`}>
-                FX {fxGainLossUsd >= 0 ? 'Gain' : 'Loss'}: {formatUSD(Math.abs(fxGainLossUsd))}
-              </span>
-            )}
-          </div>
-        </div>
-        <Button onClick={handleRecordPayment} disabled={insertPayment.isPending}>
-          <Plus className="w-4 h-4 mr-2" />Record Payment
-        </Button>
-      </div>
 
-      {/* Payment history */}
-      {payments.length > 0 && (
-        <div className="erp-table-container">
-          <table className="w-full text-sm">
-            <thead><tr className="border-b border-border bg-muted/50">
-              <th className="text-left px-4 py-2 font-medium text-muted-foreground">Pay #</th>
-              <th className="text-left px-4 py-2 font-medium text-muted-foreground">Dir</th>
-              <th className="text-right px-4 py-2 font-medium text-muted-foreground">Amount</th>
-              <th className="text-right px-4 py-2 font-medium text-muted-foreground">FX G/L</th>
-              <th className="text-left px-4 py-2 font-medium text-muted-foreground">Method</th>
-              <th className="text-left px-4 py-2 font-medium text-muted-foreground">Date</th>
-            </tr></thead>
-            <tbody>
-              {payments.map((p: any) => (
-                <tr key={p.id} className="border-b border-border">
-                  <td className="px-4 py-2 font-mono text-xs">{p.pay_no}</td>
-                  <td className="px-4 py-2"><span className={`text-xs font-medium ${p.direction === 'AR' ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--warning))]'}`}>{p.direction}</span></td>
-                  <td className="px-4 py-2 text-right"><CurrencyDisplay usd={p.amount_usd} iqd={p.amount_iqd} size="sm" /></td>
-                  <td className="px-4 py-2 text-right"><span className={(p.fx_gain_loss_usd || 0) >= 0 ? 'fx-gain' : 'fx-loss'}>{formatUSD(Math.abs(p.fx_gain_loss_usd || 0))}</span></td>
-                  <td className="px-4 py-2 capitalize">{p.method?.replace('_', ' ')}</td>
-                  <td className="px-4 py-2 text-muted-foreground">{p.date}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {/* Vendor Bill cards */}
+        {vendorBills.map((bill: any) => {
+          const vendor = vendors?.find((v: any) => v.id === bill.vendor_id);
+          const dueUsd = (bill.amount_usd || 0) - (bill.paid_usd || 0);
+          const billPayments = apPayments.filter((p: any) => p.ref_id === bill.id);
+          const daysOverdue = bill.due_date && new Date(bill.due_date) < new Date() ? Math.ceil((new Date().getTime() - new Date(bill.due_date).getTime()) / 86400000) : 0;
+
+          return (
+            <div key={bill.id} className="border border-border rounded-lg overflow-hidden">
+              <div className="p-4 flex justify-between items-start">
+                <div>
+                  <p className="font-mono font-semibold">{bill.bill_no}</p>
+                  <p className="text-xs text-muted-foreground">Vendor: {vendor?.company || '—'}</p>
+                  <p className="text-xs text-muted-foreground">Issued: {bill.issued_date || '—'} • Due: {bill.due_date || '—'}</p>
+                </div>
+                <div className="text-right space-y-1">
+                  <StatusBadge status={dueUsd <= 0 ? 'paid' : (bill.paid_usd || 0) > 0 ? 'partial' : daysOverdue > 0 ? 'overdue' : 'issued'} />
+                  <p className="text-lg font-bold">{formatUSD(bill.amount_usd)}</p>
+                  <p className="text-xs">Paid: <span className="text-emerald-600 font-medium">{formatUSD(bill.paid_usd || 0)}</span> | Due: <span className="font-medium">{formatUSD(dueUsd)}</span></p>
+                  {daysOverdue > 0 && <p className="text-xs text-destructive font-medium">{daysOverdue} days overdue</p>}
+                </div>
+              </div>
+
+              {/* AP Payments for this bill */}
+              {billPayments.length > 0 && (
+                <div className="border-t border-border px-4 py-3">
+                  <p className="text-xs font-semibold text-muted-foreground mb-2">Payment History</p>
+                  <table className="w-full text-xs">
+                    <thead><tr className="border-b border-border">
+                      <th className="text-left py-1 font-medium text-muted-foreground">Pay #</th>
+                      <th className="text-left py-1 font-medium text-muted-foreground">Date</th>
+                      <th className="text-right py-1 font-medium text-muted-foreground">Amount</th>
+                      <th className="text-left py-1 font-medium text-muted-foreground">Method</th>
+                      <th className="text-right py-1 font-medium text-muted-foreground">FX G/L</th>
+                    </tr></thead>
+                    <tbody>
+                      {billPayments.map((p: any) => (
+                        <tr key={p.id} className="border-b border-border">
+                          <td className="py-1 font-mono">{p.pay_no}</td>
+                          <td className="py-1 text-muted-foreground">{p.date}</td>
+                          <td className="py-1 text-right"><CurrencyDisplay usd={p.amount_usd} iqd={p.amount_iqd} size="sm" /></td>
+                          <td className="py-1 capitalize">{p.method?.replace('_', ' ')}</td>
+                          <td className="py-1 text-right"><span className={(p.fx_gain_loss_usd || 0) >= 0 ? 'fx-gain' : 'fx-loss'}>{formatUSD(Math.abs(p.fx_gain_loss_usd || 0))}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* AP Record Payment Form */}
+        {vendorBills.some((b: any) => (b.amount_usd || 0) > (b.paid_usd || 0)) && (
+          <div className="p-4 bg-amber-50 rounded-lg border border-amber-200 space-y-3">
+            <p className="text-sm font-semibold">💸 Record AP Payment (You → Vendor)</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div>
+                <Label className="text-xs">Vendor Bill</Label>
+                <Select value={apForm.ref_id} onValueChange={v => {
+                  setAp('ref_id', v);
+                  const bill = vendorBills.find((b: any) => b.id === v);
+                  if (bill) setAp('pay_fx_rate', bill.fx_rate || DEFAULT_FX_RATE);
+                }}>
+                  <SelectTrigger><SelectValue placeholder="Select bill..." /></SelectTrigger>
+                  <SelectContent>
+                    {vendorBills.filter((b: any) => (b.amount_usd || 0) > (b.paid_usd || 0)).map((b: any) => {
+                      const vName = vendors?.find((v: any) => v.id === b.vendor_id)?.company || '';
+                      return <SelectItem key={b.id} value={b.id}>{b.bill_no} — {vName} ({formatUSD(b.amount_usd - (b.paid_usd || 0))} due)</SelectItem>;
+                    })}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Amount USD</Label>
+                <Input type="number" value={apForm.amount_usd || ''} onChange={e => setAp('amount_usd', parseFloat(e.target.value) || 0)} />
+              </div>
+              <div>
+                <Label className="text-xs">Payment FX Rate</Label>
+                <Input type="number" value={apForm.pay_fx_rate} onChange={e => setAp('pay_fx_rate', parseFloat(e.target.value) || DEFAULT_FX_RATE)} />
+              </div>
+              <div>
+                <Label className="text-xs">Date</Label>
+                <Input type="date" value={apForm.date} onChange={e => setAp('date', e.target.value)} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div>
+                <Label className="text-xs">Method</Label>
+                <Select value={apForm.method} onValueChange={v => setAp('method', v)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                    <SelectItem value="cash">Cash</SelectItem>
+                    <SelectItem value="check">Check</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Reference #</Label>
+                <Input value={apForm.reference} onChange={e => setAp('reference', e.target.value)} placeholder="Transaction ref..." />
+              </div>
+              <div className="col-span-2 flex items-center gap-4 pt-4">
+                <span className="text-sm text-muted-foreground">IQD: {formatIQD(apDual.amount_iqd)}</span>
+                {selectedBill && apForm.amount_usd > 0 && (
+                  <span className={`text-sm font-medium ${apFxGainLossUsd >= 0 ? 'fx-gain' : 'fx-loss'}`}>
+                    FX {apFxGainLossUsd >= 0 ? 'Gain' : 'Loss'}: {formatUSD(Math.abs(apFxGainLossUsd))}
+                  </span>
+                )}
+              </div>
+            </div>
+            <Button onClick={handleRecordAPPayment} disabled={insertPayment.isPending}>
+              <Plus className="w-4 h-4 mr-2" />Record AP Payment
+            </Button>
+          </div>
+        )}
+
+        {/* AP Summary */}
+        <div className="p-3 bg-muted/30 rounded-lg text-sm">
+          <div className="flex justify-between"><span className="text-muted-foreground">Total Billed</span><span className="font-mono font-medium">{formatUSD(vendorBills.reduce((s: number, b: any) => s + (b.amount_usd || 0), 0))}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Total Paid</span><span className="font-mono text-emerald-600">{formatUSD(vendorBills.reduce((s: number, b: any) => s + (b.paid_usd || 0), 0))}</span></div>
+          <div className="flex justify-between border-t border-border pt-1 mt-1"><span className="font-medium">Outstanding AP</span><span className="font-mono font-semibold">{formatUSD(vendorBills.reduce((s: number, b: any) => s + (b.amount_usd || 0) - (b.paid_usd || 0), 0))}</span></div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
