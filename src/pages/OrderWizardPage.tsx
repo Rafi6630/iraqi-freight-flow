@@ -1904,18 +1904,8 @@ function Step8({ invoices, vendorBills, orderId, quotations, vendors, customers 
   const arPayments = payments.filter((p: any) => p.direction === 'AR');
   const apPayments = payments.filter((p: any) => p.direction === 'AP');
 
-  // Get quotation payment terms for AR installments
-  const quotation = quotations?.[0];
-  const { data: quotationPaymentTerms = [] } = useQuery({
-    queryKey: ['quotation_payment_terms_step8', quotation?.id],
-    queryFn: async () => {
-      if (!quotation?.id) return [];
-      const { data, error } = await (supabase.from('quotation_payment_terms') as any).select('*').eq('quotation_id', quotation.id);
-      if (error) throw error;
-      return data || [];
-    },
-    enabled: !!quotation?.id,
-  });
+
+
 
   // AR payment form
   const [arForm, setArForm] = useState({
