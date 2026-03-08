@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Check, ChevronRight, Lock, Plus, Trash2, FileDown, Eye, Send, Upload, Printer, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, Lock, Plus, Trash2, FileDown, Eye, Send, Upload, Printer, RefreshCw, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
