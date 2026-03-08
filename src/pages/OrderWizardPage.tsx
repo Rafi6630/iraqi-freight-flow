@@ -449,7 +449,7 @@ function Step3({ orderId, costs, vendors, partners, employees, order, insertCost
   );
 }
 
-function Step4({ order, costs, quotations, insertQuotation, customerName, partners, employees, quotationTemplates, companySettings }: any) {
+function Step4({ order, costs, quotations, insertQuotation, customerName, customers, partners, employees, quotationTemplates, companySettings }: any) {
   const queryClient = useQueryClient();
   const [quotationPriceUsd, setQuotationPriceUsd] = useState(0);
   const [validity, setValidity] = useState(30);
@@ -466,6 +466,7 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
 
   const fxRate = fxRateOverride;
   const company = companySettings?.[0] || {};
+  const customer = customers?.find((c: any) => c.id === order.customer_id) || {};
 
   // Set default template
   useEffect(() => {
@@ -485,7 +486,7 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
   const totalEmployeeIncentiveUsd = employeeIncentiveCosts.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
   const totalCommUsd = totalPartnerCommUsd + totalEmployeeIncentiveUsd;
 
-  // === PRICING FORMULA ===
+  // === PRICING FORMULA (Section 4.3) ===
   // Total Profit = Quotation Price - Vendor Costs (excluding commissions)
   const totalProfit = quotationPriceUsd - totalVendorCostUsd;
   // Service Fee = 25% of Total Profit
@@ -494,6 +495,8 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
   const netProfitUsd = totalProfit - serviceFeeUsd;
   // Margin % = (Service Fee ÷ Total Vendor Costs) × 100
   const marginPct = totalVendorCostUsd > 0 ? (serviceFeeUsd / totalVendorCostUsd) * 100 : 0;
+
+  // === MARGIN DISTRIBUTION (Section 4.4) ===
   // Quoted Price per Service = Actual Cost + (Margin% × Actual Cost)
   const serviceBreakdown = vendorCosts.map((c: any) => {
     const costUsd = c.amount_usd || 0;
@@ -591,6 +594,7 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
       companyName: company.company_name || 'FreightFlow Logistics',
       companySlogan: company.company_slogan || 'Your Trusted Freight Forwarding Partner',
       companyLogoUrl: selectedTemplate?.company_logo_url || company.company_logo_url || null,
+      customer,
     });
 
     queryClient.invalidateQueries({ queryKey: ['quotations'] });
@@ -610,6 +614,7 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
       companyName: company.company_name || 'FreightFlow Logistics',
       companySlogan: company.company_slogan || 'Your Trusted Freight Forwarding Partner',
       companyLogoUrl: selectedTemplate?.company_logo_url || company.company_logo_url || null,
+      customer,
     });
   };
 
@@ -645,7 +650,7 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
         </div>
       </div>
 
-      {/* 4.2 Pricing Input */}
+      {/* 4.2 Pricing Input & FX */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div>
           <Label>Quotation Price (USD) *</Label>
@@ -659,6 +664,7 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
         <div>
           <Label>FX Rate (USD/IQD)</Label>
           <Input type="number" value={fxRateOverride} onChange={e => setFxRateOverride(parseFloat(e.target.value) || DEFAULT_FX_RATE)} />
+          <p className="text-xs text-muted-foreground mt-1">Override allowed</p>
         </div>
         <div>
           <Label>Validity (days)</Label>
@@ -666,62 +672,90 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
         </div>
       </div>
 
-      {/* 4.2 Pricing Formula Display */}
-      <div className="p-4 bg-muted/30 rounded-lg border border-border">
-        <p className="text-sm font-semibold mb-3">🧮 Pricing Formula</p>
-        <div className="text-xs text-muted-foreground space-y-1 mb-3">
-          <p>Total Profit = Quotation Price − Vendor Costs</p>
-          <p>Service Fee = 25% of Total Profit</p>
-          <p>Net Profit = 75% of Total Profit (remaining after Service Fee)</p>
-          <p>Margin % = Service Fee ÷ Total Vendor Costs × 100</p>
-          <p>Quoted Price per Service = Cost + (Margin% × Cost)</p>
+      {/* 4.6 Automatic Calculations Display */}
+      {totalVendorCostUsd > 0 && quotationPriceUsd > 0 && (
+        <div className="p-4 bg-muted/30 rounded-lg border border-border">
+          <p className="text-sm font-semibold mb-3">🔢 Auto-Calculated Breakdown</p>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+            <div><span className="text-xs text-muted-foreground">Total Vendor Costs</span><p className="font-mono">{formatUSD(totalVendorCostUsd)} | {formatIQD(totalVendorCostUsd * fxRate)}</p></div>
+            <div><span className="text-xs text-muted-foreground">Total Profit (Price − Vendor Costs)</span><p className={cn('font-mono', totalProfit >= 0 ? 'text-[hsl(var(--success))]' : 'text-destructive')}>{formatUSD(totalProfit)} | {formatIQD(totalProfit * fxRate)}</p></div>
+            <div><span className="text-xs text-muted-foreground">Service Fee (25% of Profit)</span><p className="font-mono">{formatUSD(serviceFeeUsd)} | {formatIQD(serviceFeeUsd * fxRate)}</p></div>
+            <div><span className="text-xs text-muted-foreground">Net Profit (75% of Profit)</span><p className="font-mono">{formatUSD(netProfitUsd)} | {formatIQD(netProfitUsd * fxRate)}</p></div>
+            <div><span className="text-xs text-muted-foreground">Margin % (Service Fee ÷ Vendor Costs)</span><p className="font-mono">{Math.round(marginPct * 100) / 100}%</p></div>
+            <div><span className="text-xs text-muted-foreground">Quotation Price</span><p className="font-mono font-semibold">{formatUSD(quotationPriceUsd)} | {formatIQD(quotationPriceUsd * fxRate)}</p></div>
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* 4.3 Quotation Structure — Per-service breakdown */}
-      <div className="p-4 bg-muted/30 rounded-lg border border-border">
-        <p className="text-sm font-semibold mb-3">📊 Service Breakdown</p>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/50">
+      {/* 4.5 Quotation Table — Customer-facing format */}
+      {serviceBreakdown.length > 0 && (
+        <div className="p-4 bg-muted/30 rounded-lg border border-border">
+          <p className="text-sm font-semibold mb-3">📄 Quotation Table (Customer View)</p>
+          <div className="erp-table-container">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-border bg-primary text-primary-foreground">
+                <th className="text-left px-3 py-2">Service</th>
+                <th className="text-right px-3 py-2">Quoted Price USD</th>
+                <th className="text-right px-3 py-2">Quoted Price IQD</th>
+              </tr></thead>
+              <tbody>
+                {serviceBreakdown.map((svc: any, i: number) => (
+                  <tr key={i} className="border-b border-border">
+                    <td className="px-3 py-2">{svc.description || svc.category || 'Service'}</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatUSD(svc.quoted_price_usd)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(svc.quoted_price_iqd)}</td>
+                  </tr>
+                ))}
+                {/* Service Fee as separate line item */}
+                <tr className="border-b border-border bg-accent/30">
+                  <td className="px-3 py-2 font-medium">Service Fee</td>
+                  <td className="px-3 py-2 text-right font-mono font-medium">{formatUSD(serviceFeeUsd)}</td>
+                  <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(serviceFeeUsd * fxRate)}</td>
+                </tr>
+                {/* Total */}
+                <tr className="bg-muted/50 font-semibold">
+                  <td className="px-3 py-2">TOTAL</td>
+                  <td className="px-3 py-2 text-right font-mono">{formatUSD(quotationPriceUsd)}</td>
+                  <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(quotationPriceUsd * fxRate)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Internal Breakdown (not shown to customer) */}
+      {serviceBreakdown.length > 0 && (
+        <details className="p-4 bg-muted/30 rounded-lg border border-border">
+          <summary className="text-sm font-semibold cursor-pointer">🔍 Internal Service Breakdown (Vendor Cost | Fee | Quoted)</summary>
+          <div className="erp-table-container mt-3">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-border bg-muted/50">
                 <th className="text-left px-3 py-2 font-medium text-muted-foreground">Service</th>
-                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Vendor Cost USD</th>
-                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Vendor Cost IQD</th>
-                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Service Fee USD</th>
-                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Service Fee IQD</th>
+                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Vendor USD</th>
+                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Vendor IQD</th>
+                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Fee USD</th>
+                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Fee IQD</th>
                 <th className="text-right px-3 py-2 font-medium text-muted-foreground">Quoted USD</th>
                 <th className="text-right px-3 py-2 font-medium text-muted-foreground">Quoted IQD</th>
-              </tr>
-            </thead>
-            <tbody>
-              {serviceBreakdown.map((svc: any, i: number) => (
-                <tr key={i} className="border-b border-border">
-                  <td className="px-3 py-2">{svc.description || svc.category || 'Service'}</td>
-                  <td className="px-3 py-2 text-right font-mono">{formatUSD(svc.vendor_cost_usd)}</td>
-                  <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(svc.vendor_cost_iqd)}</td>
-                  <td className="px-3 py-2 text-right font-mono">{formatUSD(svc.service_fee_usd)}</td>
-                  <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(svc.service_fee_iqd)}</td>
-                  <td className="px-3 py-2 text-right font-mono font-medium">{formatUSD(svc.quoted_price_usd)}</td>
-                  <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(svc.quoted_price_iqd)}</td>
-                </tr>
-              ))}
-              {/* Service Fee as separate line */}
-              <tr className="border-b border-border bg-accent/30">
-                <td className="px-3 py-2 font-medium" colSpan={5}>Service Fee (25% of Profit)</td>
-                <td className="px-3 py-2 text-right font-mono font-medium">{formatUSD(serviceFeeUsd)}</td>
-                <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(serviceFeeUsd * fxRate)}</td>
-              </tr>
-              {/* Total */}
-              <tr className="bg-muted/50 font-semibold">
-                <td className="px-3 py-2" colSpan={5}>TOTAL</td>
-                <td className="px-3 py-2 text-right font-mono">{formatUSD(quotationPriceUsd)}</td>
-                <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(quotationPriceUsd * fxRate)}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
+              </tr></thead>
+              <tbody>
+                {serviceBreakdown.map((svc: any, i: number) => (
+                  <tr key={i} className="border-b border-border">
+                    <td className="px-3 py-2">{svc.description || svc.category || 'Service'}</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatUSD(svc.vendor_cost_usd)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(svc.vendor_cost_iqd)}</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatUSD(svc.service_fee_usd)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(svc.service_fee_iqd)}</td>
+                    <td className="px-3 py-2 text-right font-mono font-medium">{formatUSD(svc.quoted_price_usd)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(svc.quoted_price_iqd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
 
       {/* 4.4 Payment Terms */}
       <div className="p-4 bg-muted/30 rounded-lg border border-border">
@@ -758,7 +792,7 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
         </p>
       </div>
 
-      {/* 4.5 Additional Fields */}
+      {/* 4.7 Additional Fields */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <Label>Quotation Description / Terms & Conditions</Label>
@@ -774,7 +808,7 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
         </div>
       </div>
 
-      {/* 4.6 Quotation Summary */}
+      {/* 4.9 Quotation Summary */}
       <div className="p-4 bg-primary/5 rounded-lg border border-primary/20">
         <p className="text-sm font-semibold mb-3">📋 Quotation Summary</p>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -789,7 +823,7 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
             <p className="text-xs text-muted-foreground">{formatIQD(totalVendorCostUsd * fxRate)}</p>
           </div>
           <div>
-            <p className="text-xs text-muted-foreground">Total Profit</p>
+            <p className="text-xs text-muted-foreground">Profit</p>
             <p className={cn('text-lg font-semibold', totalProfit >= 0 ? 'text-[hsl(var(--success))]' : 'text-destructive')}>{formatUSD(totalProfit)}</p>
             <p className="text-xs text-muted-foreground">{formatIQD(totalProfit * fxRate)}</p>
           </div>
@@ -820,7 +854,7 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
         </div>
       )}
 
-      {/* 4.7 Generate, Preview, Download, Send */}
+      {/* 4.10 Generate, Preview, Download, Send */}
       <div className="flex flex-wrap gap-3">
         <Button onClick={handleGenerate} disabled={insertQuotation.isPending} size="lg">
           <FileDown className="w-4 h-4 mr-2" />{quotations.length > 0 ? 'Regenerate' : 'Generate'} Quotation PDF
@@ -847,7 +881,7 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
             <DialogTitle>Quotation Preview — {quotations[0]?.quote_no || 'Draft'}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 text-sm">
-            {/* Company & Customer */}
+            {/* Company & Quotation No */}
             <div className="flex justify-between items-start">
               <div>
                 <p className="text-lg font-bold">{company.company_name || 'FreightFlow Logistics'}</p>
@@ -856,49 +890,62 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
               <div className="text-right">
                 <p className="text-xs text-muted-foreground">Quotation #</p>
                 <p className="font-mono font-medium">{quotations[0]?.quote_no || 'Draft'}</p>
+                <p className="text-xs text-muted-foreground mt-1">Date: {new Date().toLocaleDateString()}</p>
               </div>
             </div>
 
-            {/* Order & Customer Details */}
+            {/* Customer Full Info */}
+            <div className="p-4 bg-muted/30 rounded-lg">
+              <p className="text-xs text-muted-foreground mb-1">Customer</p>
+              <p className="font-semibold">{customer.company || customerName}</p>
+              {customer.contact_name && <p className="text-xs">Contact: {customer.contact_name}</p>}
+              {customer.phone && <p className="text-xs">Phone: {customer.phone}</p>}
+              {customer.email && <p className="text-xs">Email: {customer.email}</p>}
+              {customer.address && <p className="text-xs">Address: {customer.address}{customer.city ? `, ${customer.city}` : ''}</p>}
+            </div>
+
+            {/* Order / Shipment Details */}
             <div className="grid grid-cols-2 gap-4 p-4 bg-muted/30 rounded-lg">
-              <div><p className="text-xs text-muted-foreground">Customer</p><p className="font-medium">{customerName}</p></div>
               <div><p className="text-xs text-muted-foreground">Order</p><p className="font-medium">{order.order_no}</p></div>
               <div><p className="text-xs text-muted-foreground">Route</p><p>{order.origin_city || order.origin_country} → {order.destination_city || order.destination_country}</p></div>
               <div><p className="text-xs text-muted-foreground">Mode / Incoterm</p><p className="uppercase">{order.mode} {order.incoterm ? `/ ${order.incoterm}` : ''}</p></div>
               <div><p className="text-xs text-muted-foreground">Cargo</p><p>{order.cargo_desc || '—'}</p></div>
               <div><p className="text-xs text-muted-foreground">ETD / ETA</p><p>{order.etd || '—'} → {order.eta || '—'}</p></div>
+              {order.container_type && <div><p className="text-xs text-muted-foreground">Container</p><p>{order.container_type}</p></div>}
+              {order.weight && <div><p className="text-xs text-muted-foreground">Weight</p><p>{order.weight} kg</p></div>}
+              {order.packages && <div><p className="text-xs text-muted-foreground">Packages</p><p>{order.packages}</p></div>}
             </div>
 
-            {/* Services table */}
+            {/* FX Rate */}
+            <div className="p-3 bg-muted/30 rounded-lg">
+              <p className="text-xs font-semibold">FX Rate: {fxRate.toLocaleString()} USD/IQD — Date: {fxDate}</p>
+              <p className="text-xs text-muted-foreground">FX rate locked at time of creation</p>
+            </div>
+
+            {/* Services table — Customer-facing */}
             <table className="w-full text-sm border border-border">
               <thead><tr className="bg-primary text-primary-foreground">
                 <th className="px-3 py-2 text-left">Service</th>
-                <th className="px-3 py-2 text-right">Cost USD</th>
-                <th className="px-3 py-2 text-right">Cost IQD</th>
-                <th className="px-3 py-2 text-right">Fee USD</th>
-                <th className="px-3 py-2 text-right">Quoted USD</th>
-                <th className="px-3 py-2 text-right">Quoted IQD</th>
+                <th className="px-3 py-2 text-right">Quoted Price USD</th>
+                <th className="px-3 py-2 text-right">Quoted Price IQD</th>
               </tr></thead>
               <tbody>
                 {serviceBreakdown.map((svc: any, i: number) => (
                   <tr key={i} className="border-b border-border">
                     <td className="px-3 py-2">{svc.description || svc.category || 'Service'}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatUSD(svc.vendor_cost_usd)}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatIQD(svc.vendor_cost_iqd)}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatUSD(svc.service_fee_usd)}</td>
                     <td className="px-3 py-2 text-right font-mono font-medium">{formatUSD(svc.quoted_price_usd)}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatIQD(svc.quoted_price_iqd)}</td>
+                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(svc.quoted_price_iqd)}</td>
                   </tr>
                 ))}
                 <tr className="bg-accent/30 border-b border-border">
-                  <td className="px-3 py-2 font-medium" colSpan={4}>Service Fee</td>
+                  <td className="px-3 py-2 font-medium">Service Fee</td>
                   <td className="px-3 py-2 text-right font-mono font-medium">{formatUSD(serviceFeeUsd)}</td>
-                  <td className="px-3 py-2 text-right font-mono">{formatIQD(serviceFeeUsd * fxRate)}</td>
+                  <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(serviceFeeUsd * fxRate)}</td>
                 </tr>
                 <tr className="font-semibold bg-muted/50">
-                  <td className="px-3 py-2" colSpan={4}>TOTAL</td>
+                  <td className="px-3 py-2">TOTAL</td>
                   <td className="px-3 py-2 text-right font-mono">{formatUSD(quotationPriceUsd)}</td>
-                  <td className="px-3 py-2 text-right font-mono">{formatIQD(quotationPriceUsd * fxRate)}</td>
+                  <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(quotationPriceUsd * fxRate)}</td>
                 </tr>
               </tbody>
             </table>
@@ -920,7 +967,7 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
             )}
 
             <p className="text-xs text-muted-foreground">
-              Validity: {validity} days from date of issue. FX Rate: {fxRate.toLocaleString()} USD/IQD ({fxDate}).
+              Validity: {validity} days from date of issue (expires {new Date(Date.now() + validity * 86400000).toLocaleDateString()}). FX Rate: {fxRate.toLocaleString()} USD/IQD ({fxDate}).
             </p>
           </div>
 

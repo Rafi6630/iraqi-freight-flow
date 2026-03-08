@@ -44,10 +44,12 @@ export function generateQuotationPDF(data: {
   fxRate: number; fxDate: string; validity: number;
   serviceBreakdown?: any[]; paymentTerms?: { description: string; percentage: number }[];
   quotationDescription?: string; companyName?: string; companySlogan?: string; companyLogoUrl?: string | null;
+  customer?: any;
 }) {
   const doc = new jsPDF();
   const companyName = data.companyName || COMPANY_NAME;
   const companySlogan = data.companySlogan || COMPANY_SLOGAN;
+  const customer = data.customer || {};
 
   // Header
   doc.setFontSize(18);
@@ -71,41 +73,40 @@ export function generateQuotationPDF(data: {
 
   let y = 45;
 
-  // Customer & Order info
+  // Customer info
   doc.setFontSize(10);
   doc.text('To:', 14, y);
   doc.setFont('helvetica', 'bold');
-  doc.text(data.customerName, 14, y + 6);
+  doc.text(customer.company || data.customerName, 14, y + 6);
   doc.setFont('helvetica', 'normal');
+  if (customer.contact_name) doc.text(`Contact: ${customer.contact_name}`, 14, y + 12);
+  if (customer.phone) doc.text(`Phone: ${customer.phone}`, 14, y + 18);
+  if (customer.email) doc.text(`Email: ${customer.email}`, 14, y + 24);
+  if (customer.address) doc.text(`Address: ${customer.address}${customer.city ? `, ${customer.city}` : ''}`, 14, y + 30);
 
+  // Order info (right side)
   doc.text(`Order: ${data.order.order_no}`, 120, y);
   doc.text(`Route: ${data.order.origin_city || data.order.origin_country} → ${data.order.destination_city || data.order.destination_country}`, 120, y + 6);
   doc.text(`Mode: ${data.order.mode?.toUpperCase()}`, 120, y + 12);
   if (data.order.incoterm) doc.text(`Incoterm: ${data.order.incoterm}`, 120, y + 18);
-  if (data.order.cargo_desc) doc.text(`Cargo: ${data.order.cargo_desc.substring(0, 40)}`, 14, y + 12);
-  if (data.order.etd) doc.text(`ETD: ${data.order.etd}`, 14, y + 18);
-  if (data.order.eta) doc.text(`ETA: ${data.order.eta}`, 70, y + 18);
+  if (data.order.cargo_desc) doc.text(`Cargo: ${data.order.cargo_desc.substring(0, 40)}`, 120, y + 24);
+  if (data.order.etd) doc.text(`ETD: ${data.order.etd}`, 120, y + 30);
+  if (data.order.eta) doc.text(`ETA: ${data.order.eta}`, 160, y + 30);
 
-  y += 28;
+  y += 38;
 
   // FX Block
   y = addFxBlock(doc, y, data.fxRate, data.fxDate);
 
-  // Services table with full breakdown
+  // Services table — Customer-facing: Service | Quoted Price USD | Quoted Price IQD
   const breakdown = data.serviceBreakdown || data.costs.map((c: any) => ({
     description: c.description || c.category || 'Service',
-    vendor_cost_usd: c.amount_usd,
-    vendor_cost_iqd: c.amount_iqd,
-    service_fee_usd: c.amount_usd * (data.marginPct / 100),
     quoted_price_usd: c.amount_usd * (1 + data.marginPct / 100),
     quoted_price_iqd: c.amount_usd * (1 + data.marginPct / 100) * data.fxRate,
   }));
 
   const serviceRows: any[] = breakdown.map((svc: any) => [
     svc.description || svc.category || 'Service',
-    formatUSD(svc.vendor_cost_usd),
-    formatIQD(svc.vendor_cost_iqd || svc.vendor_cost_usd * data.fxRate),
-    formatUSD(svc.service_fee_usd),
     formatUSD(svc.quoted_price_usd),
     formatIQD(svc.quoted_price_iqd || svc.quoted_price_usd * data.fxRate),
   ]);
@@ -113,8 +114,6 @@ export function generateQuotationPDF(data: {
   // Service fee line
   serviceRows.push([
     { content: 'Service Fee', styles: { fontStyle: 'bold' } },
-    '', '',
-    formatUSD(data.serviceFeeUsd),
     formatUSD(data.serviceFeeUsd),
     formatIQD(data.serviceFeeUsd * data.fxRate),
   ]);
@@ -122,14 +121,13 @@ export function generateQuotationPDF(data: {
   // Total
   serviceRows.push([
     { content: 'TOTAL', styles: { fontStyle: 'bold' } },
-    '', '', '',
     { content: formatUSD(data.totalUsd), styles: { fontStyle: 'bold' } },
     { content: formatIQD(data.totalUsd * data.fxRate), styles: { fontStyle: 'bold' } },
   ]);
 
   autoTable(doc, {
     startY: y,
-    head: [['Service', 'Cost USD', 'Cost IQD', 'Fee USD', 'Quoted USD', 'Quoted IQD']],
+    head: [['Service', 'Quoted Price USD', 'Quoted Price IQD']],
     body: serviceRows,
     theme: 'grid',
     headStyles: { fillColor: [41, 98, 255], fontSize: 8 },
