@@ -1201,6 +1201,19 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
   const [billDate, setBillDate] = useState(new Date().toISOString().split('T')[0]);
   const [billTaxRate, setBillTaxRate] = useState(0);
   const [billNotes, setBillNotes] = useState('');
+  const [showAddBillForm, setShowAddBillForm] = useState(false);
+  const [manualBillVendorId, setManualBillVendorId] = useState('');
+  const [manualBillDueDate, setManualBillDueDate] = useState(new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]);
+  const [manualBillLineItems, setManualBillLineItems] = useState<{ description: string; qty: number; unit: string; unitCost: number }[]>([{ description: '', qty: 1, unit: 'Service', unitCost: 0 }]);
+
+  const addManualBillLineItem = () => setManualBillLineItems(prev => [...prev, { description: '', qty: 1, unit: 'Service', unitCost: 0 }]);
+  const removeManualBillLineItem = (idx: number) => setManualBillLineItems(prev => prev.filter((_, i) => i !== idx));
+  const updateManualBillLineItem = (idx: number, field: string, value: any) => {
+    setManualBillLineItems(prev => prev.map((li, i) => i === idx ? { ...li, [field]: value } : li));
+  };
+  const manualBillSubtotal = manualBillLineItems.reduce((s, li) => s + li.qty * li.unitCost, 0);
+  const manualBillTaxAmount = manualBillSubtotal * (billTaxRate / 100);
+  const manualBillTotal = manualBillSubtotal + manualBillTaxAmount;
 
   // Populate invoice line items from quotation services
   useEffect(() => {
