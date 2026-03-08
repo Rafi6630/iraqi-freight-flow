@@ -1109,6 +1109,7 @@ export type Database = {
           currency_input: string | null
           date: string
           direction: Database["public"]["Enums"]["payment_direction"]
+          fee_description: string | null
           fx_date: string
           fx_gain_loss_iqd: number | null
           fx_gain_loss_usd: number | null
@@ -1120,6 +1121,8 @@ export type Database = {
           order_id: string | null
           pay_currency: string | null
           pay_no: string
+          payment_fee_iqd: number | null
+          payment_fee_usd: number | null
           payment_method_id: string | null
           ref_id: string | null
           ref_type: Database["public"]["Enums"]["payment_ref_type"]
@@ -1133,6 +1136,7 @@ export type Database = {
           currency_input?: string | null
           date: string
           direction: Database["public"]["Enums"]["payment_direction"]
+          fee_description?: string | null
           fx_date: string
           fx_gain_loss_iqd?: number | null
           fx_gain_loss_usd?: number | null
@@ -1144,6 +1148,8 @@ export type Database = {
           order_id?: string | null
           pay_currency?: string | null
           pay_no: string
+          payment_fee_iqd?: number | null
+          payment_fee_usd?: number | null
           payment_method_id?: string | null
           ref_id?: string | null
           ref_type: Database["public"]["Enums"]["payment_ref_type"]
@@ -1157,6 +1163,7 @@ export type Database = {
           currency_input?: string | null
           date?: string
           direction?: Database["public"]["Enums"]["payment_direction"]
+          fee_description?: string | null
           fx_date?: string
           fx_gain_loss_iqd?: number | null
           fx_gain_loss_usd?: number | null
@@ -1168,6 +1175,8 @@ export type Database = {
           order_id?: string | null
           pay_currency?: string | null
           pay_no?: string
+          payment_fee_iqd?: number | null
+          payment_fee_usd?: number | null
           payment_method_id?: string | null
           ref_id?: string | null
           ref_type?: Database["public"]["Enums"]["payment_ref_type"]
