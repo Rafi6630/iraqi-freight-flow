@@ -2,16 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
-type TableName = 'customers' | 'vendors' | 'employees' | 'partners' | 'cofounder_capital' |
-  'exchange_rates' | 'orders' | 'order_costs' | 'quotations' | 'invoices' | 'vendor_bills' |
-  'payments' | 'commissions' | 'expenses' | 'month_close' | 'payment_methods' |
-  'company_settings' | 'invoice_settings' | 'documents' | 'audit_log' |
-  'quotation_templates' | 'quotation_services' | 'quotation_payment_terms' |
-  'exchange_rate_history' | 'exchange_rate_settings' |
-  'payment_reminders' | 'payment_reminder_history' | 'payment_reminder_settings' |
-  'payment_reminder_templates' | 'customer_reminder_settings' | 'user_roles';
-
-export function useTableQuery<T = any>(table: TableName, options?: {
+export function useTableQuery<T = any>(table: string, options?: {
   orderBy?: string;
   ascending?: boolean;
   filter?: Record<string, any>;
@@ -19,7 +10,7 @@ export function useTableQuery<T = any>(table: TableName, options?: {
   return useQuery({
     queryKey: [table, options?.filter],
     queryFn: async () => {
-      let query = supabase.from(table).select('*');
+      let query = (supabase.from(table as any) as any).select('*');
       if (options?.filter) {
         Object.entries(options.filter).forEach(([key, value]) => {
           query = query.eq(key, value);
@@ -37,11 +28,11 @@ export function useTableQuery<T = any>(table: TableName, options?: {
   });
 }
 
-export function useInsertMutation(table: TableName) {
+export function useInsertMutation(table: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (record: Record<string, any>) => {
-      const { data, error } = await supabase.from(table).insert(record).select().single();
+      const { data, error } = await (supabase.from(table as any) as any).insert(record).select().single();
       if (error) throw error;
       return data;
     },
@@ -55,11 +46,11 @@ export function useInsertMutation(table: TableName) {
   });
 }
 
-export function useUpdateMutation(table: TableName) {
+export function useUpdateMutation(table: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...updates }: Record<string, any> & { id: string }) => {
-      const { data, error } = await supabase.from(table).update(updates).eq('id', id).select().single();
+      const { data, error } = await (supabase.from(table as any) as any).update(updates).eq('id', id).select().single();
       if (error) throw error;
       return data;
     },
@@ -73,11 +64,11 @@ export function useUpdateMutation(table: TableName) {
   });
 }
 
-export function useDeleteMutation(table: TableName) {
+export function useDeleteMutation(table: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from(table).delete().eq('id', id);
+      const { error } = await (supabase.from(table as any) as any).delete().eq('id', id);
       if (error) throw error;
     },
     onSuccess: () => {
