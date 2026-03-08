@@ -11,6 +11,33 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 
+const countryCityMap: Record<string, string[]> = {
+  'Iraq': ['Baghdad', 'Basra', 'Erbil', 'Sulaymaniyah', 'Mosul', 'Najaf', 'Karbala', 'Kirkuk', 'Duhok', 'Umm Qasr'],
+  'China': ['Shanghai', 'Shenzhen', 'Guangzhou', 'Ningbo', 'Qingdao', 'Tianjin', 'Xiamen', 'Dalian', 'Beijing', 'Hong Kong'],
+  'Turkey': ['Istanbul', 'Mersin', 'Izmir', 'Ankara', 'Trabzon', 'Iskenderun'],
+  'UAE': ['Dubai', 'Abu Dhabi', 'Sharjah', 'Jebel Ali', 'Fujairah'],
+  'India': ['Mumbai', 'Chennai', 'Nhava Sheva', 'Kolkata', 'Delhi', 'Mundra'],
+  'Saudi Arabia': ['Jeddah', 'Riyadh', 'Dammam', 'Jubail'],
+  'Iran': ['Tehran', 'Bandar Abbas', 'Isfahan', 'Bushehr'],
+  'Jordan': ['Amman', 'Aqaba'],
+  'Kuwait': ['Kuwait City', 'Shuwaikh'],
+  'Oman': ['Muscat', 'Sohar', 'Salalah'],
+  'Bahrain': ['Manama'],
+  'Qatar': ['Doha'],
+  'Egypt': ['Cairo', 'Alexandria', 'Port Said', 'Suez'],
+  'Germany': ['Hamburg', 'Bremen', 'Frankfurt', 'Munich', 'Berlin'],
+  'Netherlands': ['Rotterdam', 'Amsterdam'],
+  'United Kingdom': ['London', 'Felixstowe', 'Southampton', 'Liverpool'],
+  'United States': ['New York', 'Los Angeles', 'Houston', 'Miami', 'Chicago', 'Savannah'],
+  'South Korea': ['Busan', 'Seoul', 'Incheon'],
+  'Japan': ['Tokyo', 'Yokohama', 'Osaka', 'Kobe'],
+  'Malaysia': ['Port Klang', 'Kuala Lumpur', 'Penang'],
+  'Singapore': ['Singapore'],
+  'Pakistan': ['Karachi', 'Lahore', 'Islamabad'],
+  'Lebanon': ['Beirut', 'Tripoli'],
+  'Syria': ['Damascus', 'Latakia'],
+};
+
 const stepLabels: Record<number, string> = {
   1: 'Setup', 2: 'Shipment', 3: 'Cost Sheet', 4: 'Quotation', 5: 'Approval',
   6: 'Execution', 7: 'Invoice', 8: 'Payment', 9: 'Closed',
@@ -150,12 +177,40 @@ export default function OrdersPage() {
               </Select>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div><Label className="text-xs">Origin Country *</Label><Input value={form.origin_country} onChange={e => setField('origin_country', e.target.value)} placeholder="e.g. China" /></div>
-              <div><Label className="text-xs">Origin City</Label><Input value={form.origin_city} onChange={e => setField('origin_city', e.target.value)} placeholder="e.g. Shanghai" /></div>
+              <div><Label className="text-xs">Origin Country *</Label>
+                <Select value={form.origin_country} onValueChange={v => { setField('origin_country', v); setField('origin_city', ''); }}>
+                  <SelectTrigger><SelectValue placeholder="Select country" /></SelectTrigger>
+                  <SelectContent>
+                    {Object.keys(countryCityMap).sort().map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div><Label className="text-xs">Origin City</Label>
+                <Select value={form.origin_city} onValueChange={v => setField('origin_city', v)} disabled={!form.origin_country}>
+                  <SelectTrigger><SelectValue placeholder="Select city" /></SelectTrigger>
+                  <SelectContent>
+                    {(countryCityMap[form.origin_country] || []).map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div><Label className="text-xs">Destination Country *</Label><Input value={form.destination_country} onChange={e => setField('destination_country', e.target.value)} placeholder="e.g. Iraq" /></div>
-              <div><Label className="text-xs">Destination City</Label><Input value={form.destination_city} onChange={e => setField('destination_city', e.target.value)} placeholder="e.g. Basra" /></div>
+              <div><Label className="text-xs">Destination Country *</Label>
+                <Select value={form.destination_country} onValueChange={v => { setField('destination_country', v); setField('destination_city', ''); }}>
+                  <SelectTrigger><SelectValue placeholder="Select country" /></SelectTrigger>
+                  <SelectContent>
+                    {Object.keys(countryCityMap).sort().map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div><Label className="text-xs">Destination City</Label>
+                <Select value={form.destination_city} onValueChange={v => setField('destination_city', v)} disabled={!form.destination_country}>
+                  <SelectTrigger><SelectValue placeholder="Select city" /></SelectTrigger>
+                  <SelectContent>
+                    {(countryCityMap[form.destination_country] || []).map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
           <DialogFooter>
