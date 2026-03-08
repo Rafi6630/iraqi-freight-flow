@@ -1996,20 +1996,8 @@ function Step8({ invoices, vendorBills, orderId, quotations, vendors, customers 
     toast.success('AP payment recorded');
   };
 
-  // Build installment schedule for each invoice
-  const buildInstallments = (inv: any) => {
-    if (!quotationPaymentTerms.length) return [];
-    const invArPayments = arPayments.filter((p: any) => p.ref_id === inv.id);
-    let cumulativePaid = 0;
-    return quotationPaymentTerms.map((term: any, idx: number) => {
-      const termAmountUsd = inv.amount_usd * ((term.percentage || 0) / 100);
-      const allocated = Math.min(termAmountUsd, Math.max(0, invArPayments.reduce((s: number, p: any) => s + p.amount_usd, 0) - cumulativePaid));
-      cumulativePaid += termAmountUsd;
-      const paidForTerm = Math.min(termAmountUsd, Math.max(0, (inv.paid_usd || 0) - (idx > 0 ? quotationPaymentTerms.slice(0, idx).reduce((s: any, t: any) => s + inv.amount_usd * ((t.percentage || 0) / 100), 0) : 0)));
-      const status = paidForTerm >= termAmountUsd ? 'paid' : paidForTerm > 0 ? 'partial' : 'pending';
-      return { ...term, termAmountUsd, paidForTerm, status, idx };
-    });
-  };
+
+
 
   return (
     <div className="space-y-6">
