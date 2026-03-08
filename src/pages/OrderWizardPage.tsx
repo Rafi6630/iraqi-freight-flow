@@ -86,11 +86,64 @@ export default function OrderWizardPage() {
     queryClient.invalidateQueries({ queryKey: ['order', id] });
   };
 
-  const advanceStep = async () => {
-    if (currentStep < 9) {
-      await saveOrderField({ status_step: currentStep + 1 });
-      setCurrentStep(s => s + 1);
+  // Step validation logic
+  const getStepValidation = (stepNum: number): { canAdvance: boolean; message: string } => {
+    switch (stepNum) {
+      case 1:
+        if (!order.customer_id) return { canAdvance: false, message: 'Customer is required' };
+        if (!order.mode) return { canAdvance: false, message: 'Transport mode is required' };
+        if (!order.direction) return { canAdvance: false, message: 'Direction is required' };
+        if (!order.origin_country) return { canAdvance: false, message: 'Origin country is required' };
+        if (!order.destination_country) return { canAdvance: false, message: 'Destination country is required' };
+        if (!order.responsible_employee_id) return { canAdvance: false, message: 'Responsible employee is required' };
+        return { canAdvance: true, message: '' };
+      case 2:
+        if (!order.cargo_desc) return { canAdvance: false, message: 'Cargo description is required' };
+        if (!order.weight) return { canAdvance: false, message: 'Weight is required' };
+        if (!order.etd) return { canAdvance: false, message: 'ETD is required' };
+        if (!order.eta) return { canAdvance: false, message: 'ETA is required' };
+        return { canAdvance: true, message: '' };
+      case 3:
+        if (costs.filter((c: any) => c.category !== 'partner_commission' && c.category !== 'employee_incentive').length === 0)
+          return { canAdvance: false, message: 'Add at least one vendor cost' };
+        return { canAdvance: true, message: '' };
+      case 4:
+        if (quotations.length === 0) return { canAdvance: false, message: 'Create at least one quotation' };
+        return { canAdvance: true, message: '' };
+      case 5: {
+        const hasApproved = quotations.some((q: any) => q.status === 'approved');
+        if (!hasApproved) return { canAdvance: false, message: 'At least one quotation must be approved' };
+        return { canAdvance: true, message: '' };
+      }
+      case 6:
+        if (!order.carrier_name) return { canAdvance: false, message: 'Carrier name is required' };
+        return { canAdvance: true, message: '' };
+      case 7:
+        if (invoices.length === 0) return { canAdvance: false, message: 'Generate at least one invoice' };
+        if (vendorBills.length === 0) return { canAdvance: false, message: 'Generate at least one vendor bill' };
+        return { canAdvance: true, message: '' };
+      case 8: {
+        const outstandingAR = invoices.reduce((s: number, i: any) => s + (i.amount_usd || 0) - (i.paid_usd || 0), 0);
+        const outstandingAP = vendorBills.reduce((s: number, b: any) => s + (b.amount_usd || 0) - (b.paid_usd || 0), 0);
+        if (outstandingAR > 0.01) return { canAdvance: false, message: `Outstanding AR: ${formatUSD(outstandingAR)} — all invoices must be fully paid` };
+        if (outstandingAP > 0.01) return { canAdvance: false, message: `Outstanding AP: ${formatUSD(outstandingAP)} — all bills must be fully paid` };
+        return { canAdvance: true, message: '' };
+      }
+      default:
+        return { canAdvance: true, message: '' };
     }
+  };
+
+  const currentValidation = getStepValidation(currentStep);
+
+  const advanceStep = async () => {
+    if (currentStep >= 9) return;
+    if (!currentValidation.canAdvance) {
+      toast.error(currentValidation.message);
+      return;
+    }
+    await saveOrderField({ status_step: currentStep + 1 });
+    setCurrentStep(s => s + 1);
   };
 
   const customerName = customers.find((c: any) => c.id === order.customer_id)?.company || '—';
