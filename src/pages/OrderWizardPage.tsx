@@ -1910,7 +1910,6 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
   // AR payment form
   const [arForm, setArForm] = useState({
     ref_id: '',
-    term_index: 0,
     amount_usd: 0,
     currency_input: 'USD',
     method: 'bank_transfer',
