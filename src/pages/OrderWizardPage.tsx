@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { CurrencyDisplay } from '@/components/CurrencyDisplay';
+import { StatusBadge } from '@/components/StatusBadge';
 import { FxLockedBadge } from '@/components/FxLockedBadge';
 import { cn } from '@/lib/utils';
 import { useTableQuery, useUpdateMutation, useInsertMutation, useDeleteMutation } from '@/hooks/use-supabase-query';
