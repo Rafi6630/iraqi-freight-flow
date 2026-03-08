@@ -618,7 +618,7 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, partne
               <td className="py-2 text-right font-mono">{formatUSD(marginUsd)}</td>
               <td className="py-2 text-right font-mono text-muted-foreground">{formatIQD(marginUsd * fxRate)}</td>
             </tr>
-            <tr className={cn(netProfitUsd >= 0 ? 'bg-green-50 dark:bg-green-950/20' : 'bg-red-50 dark:bg-red-950/20')}>
+            <tr className={cn(netProfitUsd >= 0 ? 'bg-accent' : 'bg-destructive/10')}>
               <td className="py-2 font-semibold">Net Profit (D−A−B−C)</td>
               <td className={cn('py-2 text-right font-mono font-semibold', netProfitUsd >= 0 ? 'text-[hsl(var(--success))]' : 'text-destructive')}>{formatUSD(netProfitUsd)}</td>
               <td className="py-2 text-right font-mono text-muted-foreground">{formatIQD(netProfitUsd * fxRate)}</td>
