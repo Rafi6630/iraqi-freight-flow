@@ -2044,6 +2044,8 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
   const handleRecordAPPayment = async () => {
     if (!apForm.ref_id || apForm.amount_usd <= 0) { toast.error('Select bill and enter amount'); return; }
     const payNo = `PAY-${new Date().getFullYear()}-${String(payments.length + 1).padStart(4, '0')}`;
+    const feeUsd = apForm.payment_fee_usd || 0;
+    const feeIqd = Math.round(feeUsd * apForm.pay_fx_rate);
     await insertPayment.mutateAsync({
       pay_no: payNo, order_id: orderId, direction: 'AP', ref_type: 'bill',
       ref_id: apForm.ref_id, counterparty_id: selectedBill?.vendor_id || null,
@@ -2052,7 +2054,8 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
       pay_currency: apForm.currency_input, is_fx_locked: true, date: apForm.date,
       method: apForm.method, reference: apForm.reference,
       fx_gain_loss_usd: apFxGainLossUsd, fx_gain_loss_iqd: Math.round(apFxDiffIqd),
-    });
+      payment_fee_usd: feeUsd, payment_fee_iqd: feeIqd, fee_description: apForm.fee_description || null,
+    } as any);
     if (selectedBill) {
       const newPaid = (selectedBill.paid_usd || 0) + apDual.amount_usd;
       await updateBill.mutateAsync({
