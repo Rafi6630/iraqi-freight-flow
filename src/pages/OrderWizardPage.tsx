@@ -62,6 +62,8 @@ export default function OrderWizardPage() {
   const { data: quotations = [] } = useTableQuery<any>('quotations', { filter: order?.id ? { order_id: order.id } : undefined });
   const { data: invoices = [] } = useTableQuery<any>('invoices', { filter: order?.id ? { order_id: order.id } : undefined });
   const { data: vendorBills = [] } = useTableQuery<any>('vendor_bills', { filter: order?.id ? { order_id: order.id } : undefined });
+  const { data: quotationTemplates = [] } = useTableQuery<any>('quotation_templates');
+  const { data: companySettings = [] } = useTableQuery<any>('company_settings');
 
   const insertCost = useInsertMutation('order_costs');
   const deleteCost = useDeleteMutation('order_costs');
