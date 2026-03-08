@@ -191,7 +191,7 @@ function PaymentMethodsTab() {
   const handleSave = async () => {
     await insertMethod.mutateAsync(form);
     setOpen(false);
-    setForm({ method_type: 'bank_transfer', bank_name: '', account_holder_name: '', account_number: '', iban: '', swift_code: '', routing_number: '', currency: 'USD', is_default: false, notes: '' });
+    setForm({ method_type: 'Bank Transfer', bank_name: '', account_holder_name: '', account_number: '', iban: '', swift_code: '', routing_number: '', currency: 'USD', is_default: false, notes: '' });
   };
 
   if (isLoading) return <div className="erp-metric-card p-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto" /></div>;
