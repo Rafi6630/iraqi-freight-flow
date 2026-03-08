@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Check, ChevronRight, Lock, Plus, Trash2, FileDown, Eye, Send, Upload, Printer, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, Lock, Plus, Trash2, FileDown, Eye, Send, Upload, Printer, RefreshCw, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -86,11 +86,64 @@ export default function OrderWizardPage() {
     queryClient.invalidateQueries({ queryKey: ['order', id] });
   };
 
-  const advanceStep = async () => {
-    if (currentStep < 9) {
-      await saveOrderField({ status_step: currentStep + 1 });
-      setCurrentStep(s => s + 1);
+  // Step validation logic
+  const getStepValidation = (stepNum: number): { canAdvance: boolean; message: string } => {
+    switch (stepNum) {
+      case 1:
+        if (!order.customer_id) return { canAdvance: false, message: 'Customer is required' };
+        if (!order.mode) return { canAdvance: false, message: 'Transport mode is required' };
+        if (!order.direction) return { canAdvance: false, message: 'Direction is required' };
+        if (!order.origin_country) return { canAdvance: false, message: 'Origin country is required' };
+        if (!order.destination_country) return { canAdvance: false, message: 'Destination country is required' };
+        if (!order.responsible_employee_id) return { canAdvance: false, message: 'Responsible employee is required' };
+        return { canAdvance: true, message: '' };
+      case 2:
+        if (!order.cargo_desc) return { canAdvance: false, message: 'Cargo description is required' };
+        if (!order.weight) return { canAdvance: false, message: 'Weight is required' };
+        if (!order.etd) return { canAdvance: false, message: 'ETD is required' };
+        if (!order.eta) return { canAdvance: false, message: 'ETA is required' };
+        return { canAdvance: true, message: '' };
+      case 3:
+        if (costs.filter((c: any) => c.category !== 'partner_commission' && c.category !== 'employee_incentive').length === 0)
+          return { canAdvance: false, message: 'Add at least one vendor cost' };
+        return { canAdvance: true, message: '' };
+      case 4:
+        if (quotations.length === 0) return { canAdvance: false, message: 'Create at least one quotation' };
+        return { canAdvance: true, message: '' };
+      case 5: {
+        const hasApproved = quotations.some((q: any) => q.status === 'approved');
+        if (!hasApproved) return { canAdvance: false, message: 'At least one quotation must be approved' };
+        return { canAdvance: true, message: '' };
+      }
+      case 6:
+        if (!order.carrier_name) return { canAdvance: false, message: 'Carrier name is required' };
+        return { canAdvance: true, message: '' };
+      case 7:
+        if (invoices.length === 0) return { canAdvance: false, message: 'Generate at least one invoice' };
+        if (vendorBills.length === 0) return { canAdvance: false, message: 'Generate at least one vendor bill' };
+        return { canAdvance: true, message: '' };
+      case 8: {
+        const outstandingAR = invoices.reduce((s: number, i: any) => s + (i.amount_usd || 0) - (i.paid_usd || 0), 0);
+        const outstandingAP = vendorBills.reduce((s: number, b: any) => s + (b.amount_usd || 0) - (b.paid_usd || 0), 0);
+        if (outstandingAR > 0.01) return { canAdvance: false, message: `Outstanding AR: ${formatUSD(outstandingAR)} — all invoices must be fully paid` };
+        if (outstandingAP > 0.01) return { canAdvance: false, message: `Outstanding AP: ${formatUSD(outstandingAP)} — all bills must be fully paid` };
+        return { canAdvance: true, message: '' };
+      }
+      default:
+        return { canAdvance: true, message: '' };
     }
+  };
+
+  const currentValidation = getStepValidation(currentStep);
+
+  const advanceStep = async () => {
+    if (currentStep >= 9) return;
+    if (!currentValidation.canAdvance) {
+      toast.error(currentValidation.message);
+      return;
+    }
+    await saveOrderField({ status_step: currentStep + 1 });
+    setCurrentStep(s => s + 1);
   };
 
   const customerName = customers.find((c: any) => c.id === order.customer_id)?.company || '—';
@@ -146,10 +199,20 @@ export default function OrderWizardPage() {
         {currentStep === 9 && <Step9 order={order} costs={costs} invoices={invoices} onSave={saveOrderField} />}
       </div>
 
-      <div className="flex justify-between">
+      <div className="flex justify-between items-center">
         <Button variant="outline" disabled={currentStep === 1} onClick={() => setCurrentStep(s => s - 1)}>Previous</Button>
         {currentStep === order.status_step && currentStep < 9 && (
-          <Button onClick={advanceStep}>Complete Step & Continue <ChevronRight className="w-4 h-4 ml-1" /></Button>
+          <div className="flex items-center gap-3">
+            {!currentValidation.canAdvance && (
+              <div className="flex items-center gap-1.5 text-sm text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{currentValidation.message}</span>
+              </div>
+            )}
+            <Button onClick={advanceStep} disabled={!currentValidation.canAdvance}>
+              Complete Step & Continue <ChevronRight className="w-4 h-4 ml-1" />
+            </Button>
+          </div>
         )}
       </div>
     </div>
@@ -1912,10 +1975,12 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
     ref_id: '',
     amount_usd: 0,
     currency_input: 'USD',
-    method: 'bank_transfer',
+    method: 'Bank Transfer',
     reference: '',
     pay_fx_rate: DEFAULT_FX_RATE,
     date: new Date().toISOString().split('T')[0],
+    payment_fee_usd: 0,
+    fee_description: '',
   });
 
   // AP payment form
@@ -1923,10 +1988,12 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
     ref_id: '',
     amount_usd: 0,
     currency_input: 'USD',
-    method: 'bank_transfer',
+    method: 'Bank Transfer',
     reference: '',
     pay_fx_rate: DEFAULT_FX_RATE,
     date: new Date().toISOString().split('T')[0],
+    payment_fee_usd: 0,
+    fee_description: '',
   });
 
   const setAr = (k: string, v: any) => setArForm(p => ({ ...p, [k]: v }));
@@ -1950,6 +2017,8 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
   const handleRecordARPayment = async () => {
     if (!arForm.ref_id || arForm.amount_usd <= 0) { toast.error('Select invoice and enter amount'); return; }
     const payNo = `PAY-${new Date().getFullYear()}-${String(payments.length + 1).padStart(4, '0')}`;
+    const feeUsd = arForm.payment_fee_usd || 0;
+    const feeIqd = Math.round(feeUsd * arForm.pay_fx_rate);
     await insertPayment.mutateAsync({
       pay_no: payNo, order_id: orderId, direction: 'AR', ref_type: 'invoice',
       ref_id: arForm.ref_id, counterparty_id: selectedInvoice?.customer_id || null,
@@ -1958,7 +2027,8 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
       pay_currency: arForm.currency_input, is_fx_locked: true, date: arForm.date,
       method: arForm.method, reference: arForm.reference,
       fx_gain_loss_usd: arFxGainLossUsd, fx_gain_loss_iqd: Math.round(arFxDiffIqd),
-    });
+      payment_fee_usd: feeUsd, payment_fee_iqd: feeIqd, fee_description: arForm.fee_description || null,
+    } as any);
     if (selectedInvoice) {
       const newPaid = (selectedInvoice.paid_usd || 0) + arDual.amount_usd;
       await updateInvoice.mutateAsync({
@@ -1967,13 +2037,15 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
         status: newPaid >= selectedInvoice.amount_usd ? 'paid' : 'partial',
       });
     }
-    setArForm(p => ({ ...p, ref_id: '', amount_usd: 0, reference: '' }));
+    setArForm(p => ({ ...p, ref_id: '', amount_usd: 0, reference: '', payment_fee_usd: 0, fee_description: '' }));
     toast.success('AR payment recorded');
   };
 
   const handleRecordAPPayment = async () => {
     if (!apForm.ref_id || apForm.amount_usd <= 0) { toast.error('Select bill and enter amount'); return; }
     const payNo = `PAY-${new Date().getFullYear()}-${String(payments.length + 1).padStart(4, '0')}`;
+    const feeUsd = apForm.payment_fee_usd || 0;
+    const feeIqd = Math.round(feeUsd * apForm.pay_fx_rate);
     await insertPayment.mutateAsync({
       pay_no: payNo, order_id: orderId, direction: 'AP', ref_type: 'bill',
       ref_id: apForm.ref_id, counterparty_id: selectedBill?.vendor_id || null,
@@ -1982,7 +2054,8 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
       pay_currency: apForm.currency_input, is_fx_locked: true, date: apForm.date,
       method: apForm.method, reference: apForm.reference,
       fx_gain_loss_usd: apFxGainLossUsd, fx_gain_loss_iqd: Math.round(apFxDiffIqd),
-    });
+      payment_fee_usd: feeUsd, payment_fee_iqd: feeIqd, fee_description: apForm.fee_description || null,
+    } as any);
     if (selectedBill) {
       const newPaid = (selectedBill.paid_usd || 0) + apDual.amount_usd;
       await updateBill.mutateAsync({
@@ -1991,7 +2064,7 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
         status: newPaid >= selectedBill.amount_usd ? 'paid' : 'partial',
       });
     }
-    setApForm(p => ({ ...p, ref_id: '', amount_usd: 0, reference: '' }));
+    setApForm(p => ({ ...p, ref_id: '', amount_usd: 0, reference: '', payment_fee_usd: 0, fee_description: '' }));
     toast.success('AP payment recorded');
   };
 
@@ -2100,9 +2173,14 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
                 <Select value={arForm.method} onValueChange={v => setAr('method', v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                    <SelectItem value="cash">Cash</SelectItem>
-                    <SelectItem value="check">Check</SelectItem>
+                    <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                    <SelectItem value="Cash">Cash</SelectItem>
+                    <SelectItem value="Check">Check</SelectItem>
+                    <SelectItem value="Hawala">Hawala (Exchange Office)</SelectItem>
+                    <SelectItem value="Wire Transfer">Wire Transfer</SelectItem>
+                    <SelectItem value="Mobile Payment">Mobile Payment</SelectItem>
+                    <SelectItem value="Credit Card">Credit Card</SelectItem>
+                    <SelectItem value="Other">Other</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -2110,14 +2188,23 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
                 <Label className="text-xs">Reference #</Label>
                 <Input value={arForm.reference} onChange={e => setAr('reference', e.target.value)} placeholder="Transaction ref..." />
               </div>
-              <div className="col-span-2 flex items-center gap-4 pt-4">
-                <span className="text-sm text-muted-foreground">IQD: {formatIQD(arDual.amount_iqd)}</span>
-                {selectedInvoice && arForm.amount_usd > 0 && (
-                  <span className={`text-sm font-medium ${arFxGainLossUsd >= 0 ? 'fx-gain' : 'fx-loss'}`}>
-                    FX {arFxGainLossUsd >= 0 ? 'Gain' : 'Loss'}: {formatUSD(Math.abs(arFxGainLossUsd))}
-                  </span>
-                )}
+              <div>
+                <Label className="text-xs">Payment Fee (USD)</Label>
+                <Input type="number" value={arForm.payment_fee_usd || ''} onChange={e => setAr('payment_fee_usd', parseFloat(e.target.value) || 0)} placeholder="0.00" />
               </div>
+              <div>
+                <Label className="text-xs">Fee Description</Label>
+                <Input value={arForm.fee_description} onChange={e => setAr('fee_description', e.target.value)} placeholder="e.g. Hawala fee, wire fee..." />
+              </div>
+            </div>
+            <div className="flex items-center gap-4 flex-wrap">
+              <span className="text-sm text-muted-foreground">IQD: {formatIQD(arDual.amount_iqd)}</span>
+              {arForm.payment_fee_usd > 0 && <span className="text-sm text-amber-600">Fee: {formatUSD(arForm.payment_fee_usd)}</span>}
+              {selectedInvoice && arForm.amount_usd > 0 && (
+                <span className={`text-sm font-medium ${arFxGainLossUsd >= 0 ? 'fx-gain' : 'fx-loss'}`}>
+                  FX {arFxGainLossUsd >= 0 ? 'Gain' : 'Loss'}: {formatUSD(Math.abs(arFxGainLossUsd))}
+                </span>
+              )}
             </div>
             <Button onClick={handleRecordARPayment} disabled={insertPayment.isPending}>
               <Plus className="w-4 h-4 mr-2" />Record AR Payment
@@ -2233,9 +2320,14 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
                 <Select value={apForm.method} onValueChange={v => setAp('method', v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                    <SelectItem value="cash">Cash</SelectItem>
-                    <SelectItem value="check">Check</SelectItem>
+                    <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                    <SelectItem value="Cash">Cash</SelectItem>
+                    <SelectItem value="Check">Check</SelectItem>
+                    <SelectItem value="Hawala">Hawala (Exchange Office)</SelectItem>
+                    <SelectItem value="Wire Transfer">Wire Transfer</SelectItem>
+                    <SelectItem value="Mobile Payment">Mobile Payment</SelectItem>
+                    <SelectItem value="Credit Card">Credit Card</SelectItem>
+                    <SelectItem value="Other">Other</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -2243,14 +2335,23 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
                 <Label className="text-xs">Reference #</Label>
                 <Input value={apForm.reference} onChange={e => setAp('reference', e.target.value)} placeholder="Transaction ref..." />
               </div>
-              <div className="col-span-2 flex items-center gap-4 pt-4">
-                <span className="text-sm text-muted-foreground">IQD: {formatIQD(apDual.amount_iqd)}</span>
-                {selectedBill && apForm.amount_usd > 0 && (
-                  <span className={`text-sm font-medium ${apFxGainLossUsd >= 0 ? 'fx-gain' : 'fx-loss'}`}>
-                    FX {apFxGainLossUsd >= 0 ? 'Gain' : 'Loss'}: {formatUSD(Math.abs(apFxGainLossUsd))}
-                  </span>
-                )}
+              <div>
+                <Label className="text-xs">Payment Fee (USD)</Label>
+                <Input type="number" value={apForm.payment_fee_usd || ''} onChange={e => setAp('payment_fee_usd', parseFloat(e.target.value) || 0)} placeholder="0.00" />
               </div>
+              <div>
+                <Label className="text-xs">Fee Description</Label>
+                <Input value={apForm.fee_description} onChange={e => setAp('fee_description', e.target.value)} placeholder="e.g. Hawala fee, wire fee..." />
+              </div>
+            </div>
+            <div className="flex items-center gap-4 flex-wrap">
+              <span className="text-sm text-muted-foreground">IQD: {formatIQD(apDual.amount_iqd)}</span>
+              {apForm.payment_fee_usd > 0 && <span className="text-sm text-amber-600">Fee: {formatUSD(apForm.payment_fee_usd)}</span>}
+              {selectedBill && apForm.amount_usd > 0 && (
+                <span className={`text-sm font-medium ${apFxGainLossUsd >= 0 ? 'fx-gain' : 'fx-loss'}`}>
+                  FX {apFxGainLossUsd >= 0 ? 'Gain' : 'Loss'}: {formatUSD(Math.abs(apFxGainLossUsd))}
+                </span>
+              )}
             </div>
             <Button onClick={handleRecordAPPayment} disabled={insertPayment.isPending}>
               <Plus className="w-4 h-4 mr-2" />Record AP Payment
