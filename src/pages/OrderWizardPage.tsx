@@ -2017,6 +2017,8 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
   const handleRecordARPayment = async () => {
     if (!arForm.ref_id || arForm.amount_usd <= 0) { toast.error('Select invoice and enter amount'); return; }
     const payNo = `PAY-${new Date().getFullYear()}-${String(payments.length + 1).padStart(4, '0')}`;
+    const feeUsd = arForm.payment_fee_usd || 0;
+    const feeIqd = Math.round(feeUsd * arForm.pay_fx_rate);
     await insertPayment.mutateAsync({
       pay_no: payNo, order_id: orderId, direction: 'AR', ref_type: 'invoice',
       ref_id: arForm.ref_id, counterparty_id: selectedInvoice?.customer_id || null,
@@ -2025,7 +2027,8 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
       pay_currency: arForm.currency_input, is_fx_locked: true, date: arForm.date,
       method: arForm.method, reference: arForm.reference,
       fx_gain_loss_usd: arFxGainLossUsd, fx_gain_loss_iqd: Math.round(arFxDiffIqd),
-    });
+      payment_fee_usd: feeUsd, payment_fee_iqd: feeIqd, fee_description: arForm.fee_description || null,
+    } as any);
     if (selectedInvoice) {
       const newPaid = (selectedInvoice.paid_usd || 0) + arDual.amount_usd;
       await updateInvoice.mutateAsync({
