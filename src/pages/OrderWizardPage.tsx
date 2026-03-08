@@ -1283,6 +1283,26 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
     toast.success('Vendor bills generated (commissions tracked separately in Finance)');
   };
 
+  const handleAddManualBill = async () => {
+    if (!manualBillVendorId) { toast.error('Select a vendor'); return; }
+    if (manualBillLineItems.length === 0 || manualBillTotal <= 0) { toast.error('Add at least one line item with a cost'); return; }
+    const year = new Date().getFullYear();
+    const billNo = `BILL-${year}-${String(vendorBills.length + 1).padStart(4, '0')}`;
+    const totalIqd = Math.round(manualBillTotal * fxRate);
+    await insertBill.mutateAsync({
+      bill_no: billNo, order_id: order.id, vendor_id: manualBillVendorId,
+      status: 'draft', amount_usd: manualBillTotal, amount_iqd: totalIqd,
+      fx_rate: fxRate, fx_date: new Date().toISOString().split('T')[0], is_fx_locked: true,
+      issued_date: billDate, due_date: manualBillDueDate,
+    });
+    setManualBillLineItems([{ description: '', qty: 1, unit: 'Service', unitCost: 0 }]);
+    setManualBillVendorId('');
+    setBillTaxRate(0);
+    setBillNotes('');
+    setShowAddBillForm(false);
+    toast.success('Vendor bill created');
+  };
+
   const handleDownloadInvoicePdf = (inv: any) => {
     generateInvoicePDF({
       invoiceNo: inv.invoice_no, customerName, order,
