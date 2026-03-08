@@ -2037,7 +2037,7 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
         status: newPaid >= selectedInvoice.amount_usd ? 'paid' : 'partial',
       });
     }
-    setArForm(p => ({ ...p, ref_id: '', amount_usd: 0, reference: '' }));
+    setArForm(p => ({ ...p, ref_id: '', amount_usd: 0, reference: '', payment_fee_usd: 0, fee_description: '' }));
     toast.success('AR payment recorded');
   };
 
