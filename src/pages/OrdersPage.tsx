@@ -177,12 +177,40 @@ export default function OrdersPage() {
               </Select>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div><Label className="text-xs">Origin Country *</Label><Input value={form.origin_country} onChange={e => setField('origin_country', e.target.value)} placeholder="e.g. China" /></div>
-              <div><Label className="text-xs">Origin City</Label><Input value={form.origin_city} onChange={e => setField('origin_city', e.target.value)} placeholder="e.g. Shanghai" /></div>
+              <div><Label className="text-xs">Origin Country *</Label>
+                <Select value={form.origin_country} onValueChange={v => { setField('origin_country', v); setField('origin_city', ''); }}>
+                  <SelectTrigger><SelectValue placeholder="Select country" /></SelectTrigger>
+                  <SelectContent>
+                    {Object.keys(countryCityMap).sort().map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div><Label className="text-xs">Origin City</Label>
+                <Select value={form.origin_city} onValueChange={v => setField('origin_city', v)} disabled={!form.origin_country}>
+                  <SelectTrigger><SelectValue placeholder="Select city" /></SelectTrigger>
+                  <SelectContent>
+                    {(countryCityMap[form.origin_country] || []).map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div><Label className="text-xs">Destination Country *</Label><Input value={form.destination_country} onChange={e => setField('destination_country', e.target.value)} placeholder="e.g. Iraq" /></div>
-              <div><Label className="text-xs">Destination City</Label><Input value={form.destination_city} onChange={e => setField('destination_city', e.target.value)} placeholder="e.g. Basra" /></div>
+              <div><Label className="text-xs">Destination Country *</Label>
+                <Select value={form.destination_country} onValueChange={v => { setField('destination_country', v); setField('destination_city', ''); }}>
+                  <SelectTrigger><SelectValue placeholder="Select country" /></SelectTrigger>
+                  <SelectContent>
+                    {Object.keys(countryCityMap).sort().map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div><Label className="text-xs">Destination City</Label>
+                <Select value={form.destination_city} onValueChange={v => setField('destination_city', v)} disabled={!form.destination_country}>
+                  <SelectTrigger><SelectValue placeholder="Select city" /></SelectTrigger>
+                  <SelectContent>
+                    {(countryCityMap[form.destination_country] || []).map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
           <DialogFooter>
