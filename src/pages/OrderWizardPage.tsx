@@ -2173,9 +2173,14 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
                 <Select value={arForm.method} onValueChange={v => setAr('method', v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                    <SelectItem value="cash">Cash</SelectItem>
-                    <SelectItem value="check">Check</SelectItem>
+                    <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                    <SelectItem value="Cash">Cash</SelectItem>
+                    <SelectItem value="Check">Check</SelectItem>
+                    <SelectItem value="Hawala">Hawala (Exchange Office)</SelectItem>
+                    <SelectItem value="Wire Transfer">Wire Transfer</SelectItem>
+                    <SelectItem value="Mobile Payment">Mobile Payment</SelectItem>
+                    <SelectItem value="Credit Card">Credit Card</SelectItem>
+                    <SelectItem value="Other">Other</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -2183,14 +2188,23 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
                 <Label className="text-xs">Reference #</Label>
                 <Input value={arForm.reference} onChange={e => setAr('reference', e.target.value)} placeholder="Transaction ref..." />
               </div>
-              <div className="col-span-2 flex items-center gap-4 pt-4">
-                <span className="text-sm text-muted-foreground">IQD: {formatIQD(arDual.amount_iqd)}</span>
-                {selectedInvoice && arForm.amount_usd > 0 && (
-                  <span className={`text-sm font-medium ${arFxGainLossUsd >= 0 ? 'fx-gain' : 'fx-loss'}`}>
-                    FX {arFxGainLossUsd >= 0 ? 'Gain' : 'Loss'}: {formatUSD(Math.abs(arFxGainLossUsd))}
-                  </span>
-                )}
+              <div>
+                <Label className="text-xs">Payment Fee (USD)</Label>
+                <Input type="number" value={arForm.payment_fee_usd || ''} onChange={e => setAr('payment_fee_usd', parseFloat(e.target.value) || 0)} placeholder="0.00" />
               </div>
+              <div>
+                <Label className="text-xs">Fee Description</Label>
+                <Input value={arForm.fee_description} onChange={e => setAr('fee_description', e.target.value)} placeholder="e.g. Hawala fee, wire fee..." />
+              </div>
+            </div>
+            <div className="flex items-center gap-4 flex-wrap">
+              <span className="text-sm text-muted-foreground">IQD: {formatIQD(arDual.amount_iqd)}</span>
+              {arForm.payment_fee_usd > 0 && <span className="text-sm text-amber-600">Fee: {formatUSD(arForm.payment_fee_usd)}</span>}
+              {selectedInvoice && arForm.amount_usd > 0 && (
+                <span className={`text-sm font-medium ${arFxGainLossUsd >= 0 ? 'fx-gain' : 'fx-loss'}`}>
+                  FX {arFxGainLossUsd >= 0 ? 'Gain' : 'Loss'}: {formatUSD(Math.abs(arFxGainLossUsd))}
+                </span>
+              )}
             </div>
             <Button onClick={handleRecordARPayment} disabled={insertPayment.isPending}>
               <Plus className="w-4 h-4 mr-2" />Record AR Payment
