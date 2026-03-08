@@ -1975,10 +1975,12 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
     ref_id: '',
     amount_usd: 0,
     currency_input: 'USD',
-    method: 'bank_transfer',
+    method: 'Bank Transfer',
     reference: '',
     pay_fx_rate: DEFAULT_FX_RATE,
     date: new Date().toISOString().split('T')[0],
+    payment_fee_usd: 0,
+    fee_description: '',
   });
 
   // AP payment form
@@ -1986,10 +1988,12 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
     ref_id: '',
     amount_usd: 0,
     currency_input: 'USD',
-    method: 'bank_transfer',
+    method: 'Bank Transfer',
     reference: '',
     pay_fx_rate: DEFAULT_FX_RATE,
     date: new Date().toISOString().split('T')[0],
+    payment_fee_usd: 0,
+    fee_description: '',
   });
 
   const setAr = (k: string, v: any) => setArForm(p => ({ ...p, [k]: v }));
