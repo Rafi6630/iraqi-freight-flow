@@ -86,10 +86,7 @@ export default function SettingsPage() {
           </div>
           <Button>Save Preferences</Button>
         </TabsContent>
-        <TabsContent value="exchange" className="erp-metric-card space-y-4">
-          <h3 className="text-lg font-semibold">Exchange Rate Settings</h3>
-          <p className="text-sm text-muted-foreground">Same as Exchange Offices page — manage FX rates here.</p>
-        </TabsContent>
+        <TabsContent value="exchange"><ExchangeRateSettingsTab /></TabsContent>
         <TabsContent value="payment-methods"><PaymentMethodsTab /></TabsContent>
       </Tabs>
     </div>
