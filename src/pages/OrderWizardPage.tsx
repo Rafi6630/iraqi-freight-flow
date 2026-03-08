@@ -1578,13 +1578,11 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
           <h4 className="text-base font-semibold">Accounts Payable — Vendor Bills</h4>
         </div>
 
-        {/* Bill Generation Form */}
-        {!hasBills && (
+        {/* Bill Generation - Auto from costs (only if no bills yet and vendor costs exist) */}
+        {!hasBills && vendorCosts.length > 0 && (
           <div className="space-y-4 p-4 bg-muted/30 rounded-lg border border-border">
             <p className="text-sm font-semibold">📝 Auto-Generate Vendor Bills from Order Costs</p>
-            <p className="text-xs text-muted-foreground">Bills are generated per vendor from the cost sheet. Broker commissions and employee incentives are NOT included — they are tracked separately in Finance.</p>
-
-            {/* Vendor cost preview */}
+            <p className="text-xs text-muted-foreground">Bills are generated per vendor from the cost sheet. Broker commissions and employee incentives are NOT included.</p>
             <div className="erp-table-container">
               <table className="w-full text-sm">
                 <thead><tr className="border-b border-border bg-muted/50">
@@ -1602,80 +1600,160 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
                       <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(c.amount_iqd)}</td>
                     </tr>
                   ))}
-                  {vendorCosts.length === 0 && (
-                    <tr><td colSpan={4} className="px-3 py-6 text-center text-muted-foreground">No vendor costs. Add costs in Step 3.</td></tr>
-                  )}
                 </tbody>
               </table>
             </div>
-
             <div className="grid grid-cols-3 gap-3">
-              <div>
-                <Label className="text-xs">Bill Date</Label>
-                <Input type="date" value={billDate} onChange={e => setBillDate(e.target.value)} />
-              </div>
-              <div>
-                <Label className="text-xs">Tax Rate %</Label>
-                <Input type="number" value={billTaxRate || ''} onChange={e => setBillTaxRate(parseFloat(e.target.value) || 0)} />
-              </div>
-              <div>
-                <Label className="text-xs">Additional Notes</Label>
-                <Input value={billNotes} onChange={e => setBillNotes(e.target.value)} placeholder="Vendor ref #..." />
-              </div>
+              <div><Label className="text-xs">Bill Date</Label><Input type="date" value={billDate} onChange={e => setBillDate(e.target.value)} /></div>
+              <div><Label className="text-xs">Tax Rate %</Label><Input type="number" value={billTaxRate || ''} onChange={e => setBillTaxRate(parseFloat(e.target.value) || 0)} /></div>
+              <div><Label className="text-xs">Notes</Label><Input value={billNotes} onChange={e => setBillNotes(e.target.value)} placeholder="Vendor ref #..." /></div>
             </div>
-
-            <Button onClick={handleGenerateBills} disabled={insertBill.isPending || vendorCosts.length === 0} size="lg">
-              <FileDown className="w-4 h-4 mr-2" />Generate Vendor Bills
+            <Button onClick={handleGenerateBills} disabled={insertBill.isPending} size="lg">
+              <FileDown className="w-4 h-4 mr-2" />Generate Vendor Bills from Costs
             </Button>
           </div>
         )}
 
         {/* Existing Vendor Bills */}
         {hasBills && (
-          <div className="space-y-3">
-            <div className="erp-table-container">
-              <table className="w-full text-sm">
-                <thead><tr className="border-b border-border bg-muted/50">
-                  <th className="text-left px-4 py-2 font-medium text-muted-foreground">Bill #</th>
-                  <th className="text-left px-4 py-2 font-medium text-muted-foreground">Vendor</th>
-                  <th className="text-left px-4 py-2 font-medium text-muted-foreground">Date</th>
-                  <th className="text-left px-4 py-2 font-medium text-muted-foreground">Due Date</th>
-                  <th className="text-right px-4 py-2 font-medium text-muted-foreground">Total</th>
-                  <th className="text-right px-4 py-2 font-medium text-muted-foreground">Paid</th>
-                  <th className="text-right px-4 py-2 font-medium text-muted-foreground">Due</th>
-                  <th className="text-center px-4 py-2 font-medium text-muted-foreground">Status</th>
-                  <th className="text-center px-4 py-2 font-medium text-muted-foreground">Days Overdue</th>
-                  <th className="w-20"></th>
-                </tr></thead>
-                <tbody>
-                  {vendorBills.map((bill: any) => {
-                    const vendorName = vendors.find((v: any) => v.id === bill.vendor_id)?.company || 'Unknown';
-                    const dueUsd = (bill.amount_usd || 0) - (bill.paid_usd || 0);
-                    const billStatus = (bill.paid_usd || 0) >= bill.amount_usd ? 'paid' : (bill.paid_usd || 0) > 0 ? 'partial' : bill.due_date && new Date(bill.due_date) < new Date() ? 'overdue' : bill.status;
-                    const daysOverdue = getDaysOverdue(bill.due_date);
-                    return (
-                      <tr key={bill.id} className="border-b border-border hover:bg-muted/30 transition-colors">
-                        <td className="px-4 py-2 font-mono font-medium text-primary">{bill.bill_no}</td>
-                        <td className="px-4 py-2">{vendorName}</td>
-                        <td className="px-4 py-2 text-muted-foreground">{bill.issued_date || '—'}</td>
-                        <td className="px-4 py-2 text-muted-foreground">{bill.due_date || '—'}</td>
-                        <td className="px-4 py-2 text-right font-mono">{formatUSD(bill.amount_usd)}</td>
-                        <td className="px-4 py-2 text-right font-mono text-emerald-600">{formatUSD(bill.paid_usd || 0)}</td>
-                        <td className="px-4 py-2 text-right font-mono">{formatUSD(dueUsd)}</td>
-                        <td className="px-4 py-2 text-center"><StatusBadge status={billStatus} /></td>
-                        <td className="px-4 py-2 text-center">{daysOverdue > 0 ? <span className="text-destructive font-medium">{daysOverdue}</span> : '—'}</td>
-                        <td className="px-4 py-2">
-                          <div className="flex gap-1">
-                            <Button variant="ghost" size="sm" onClick={() => handleDownloadBillPdf(bill)}><FileDown className="w-3.5 h-3.5" /></Button>
-                            <Button variant="ghost" size="sm" onClick={() => window.print()}><Printer className="w-3.5 h-3.5" /></Button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+          <div className="erp-table-container">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-border bg-muted/50">
+                <th className="text-left px-4 py-2 font-medium text-muted-foreground">Bill #</th>
+                <th className="text-left px-4 py-2 font-medium text-muted-foreground">Vendor</th>
+                <th className="text-left px-4 py-2 font-medium text-muted-foreground">Date</th>
+                <th className="text-left px-4 py-2 font-medium text-muted-foreground">Due Date</th>
+                <th className="text-right px-4 py-2 font-medium text-muted-foreground">Total</th>
+                <th className="text-right px-4 py-2 font-medium text-muted-foreground">Paid</th>
+                <th className="text-right px-4 py-2 font-medium text-muted-foreground">Due</th>
+                <th className="text-center px-4 py-2 font-medium text-muted-foreground">Status</th>
+                <th className="text-center px-4 py-2 font-medium text-muted-foreground">Days Overdue</th>
+                <th className="w-20"></th>
+              </tr></thead>
+              <tbody>
+                {vendorBills.map((bill: any) => {
+                  const vendorName = vendors.find((v: any) => v.id === bill.vendor_id)?.company || 'Unknown';
+                  const dueUsd = (bill.amount_usd || 0) - (bill.paid_usd || 0);
+                  const billStatus = (bill.paid_usd || 0) >= bill.amount_usd ? 'paid' : (bill.paid_usd || 0) > 0 ? 'partial' : bill.due_date && new Date(bill.due_date) < new Date() ? 'overdue' : bill.status;
+                  const daysOverdue = getDaysOverdue(bill.due_date);
+                  return (
+                    <tr key={bill.id} className="border-b border-border hover:bg-muted/30 transition-colors">
+                      <td className="px-4 py-2 font-mono font-medium text-primary">{bill.bill_no}</td>
+                      <td className="px-4 py-2">{vendorName}</td>
+                      <td className="px-4 py-2 text-muted-foreground">{bill.issued_date || '—'}</td>
+                      <td className="px-4 py-2 text-muted-foreground">{bill.due_date || '—'}</td>
+                      <td className="px-4 py-2 text-right font-mono">{formatUSD(bill.amount_usd)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-emerald-600">{formatUSD(bill.paid_usd || 0)}</td>
+                      <td className="px-4 py-2 text-right font-mono">{formatUSD(dueUsd)}</td>
+                      <td className="px-4 py-2 text-center"><StatusBadge status={billStatus} /></td>
+                      <td className="px-4 py-2 text-center">{daysOverdue > 0 ? <span className="text-destructive font-medium">{daysOverdue}</span> : '—'}</td>
+                      <td className="px-4 py-2">
+                        <div className="flex gap-1">
+                          <Button variant="ghost" size="sm" onClick={() => handleDownloadBillPdf(bill)}><FileDown className="w-3.5 h-3.5" /></Button>
+                          <Button variant="ghost" size="sm" onClick={() => window.print()}><Printer className="w-3.5 h-3.5" /></Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Add Vendor Bill Button - always available */}
+        <div>
+          <Button variant="outline" onClick={() => setShowAddBillForm(!showAddBillForm)}>
+            <Plus className="w-4 h-4 mr-2" />{showAddBillForm ? 'Cancel' : 'Add Vendor Bill'}
+          </Button>
+        </div>
+
+        {/* Manual Add Vendor Bill Form */}
+        {showAddBillForm && (
+          <div className="space-y-4 p-4 bg-muted/30 rounded-lg border border-border">
+            <p className="text-sm font-semibold">📝 New Vendor Bill</p>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div>
+                <Label className="text-xs">Bill # (auto)</Label>
+                <Input disabled value={`BILL-${new Date().getFullYear()}-${String(vendorBills.length + 1).padStart(4, '0')}`} className="font-mono" />
+              </div>
+              <div>
+                <Label className="text-xs">Vendor</Label>
+                <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={manualBillVendorId} onChange={e => {
+                  setManualBillVendorId(e.target.value);
+                  const v = vendors.find((v: any) => v.id === e.target.value);
+                  if (v?.payment_terms_days) setManualBillDueDate(new Date(Date.now() + v.payment_terms_days * 86400000).toISOString().split('T')[0]);
+                }}>
+                  <option value="">Select vendor...</option>
+                  {vendors.map((v: any) => <option key={v.id} value={v.id}>{v.company}</option>)}
+                </select>
+              </div>
+              <div>
+                <Label className="text-xs">Bill Date</Label>
+                <Input type="date" value={billDate} onChange={e => setBillDate(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Due Date</Label>
+                <Input type="date" value={manualBillDueDate} onChange={e => setManualBillDueDate(e.target.value)} />
+              </div>
             </div>
+
+            {/* Bill Line Items */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-semibold">Line Items</p>
+                <Button variant="outline" size="sm" onClick={addManualBillLineItem}><Plus className="w-3 h-3 mr-1" />Add Line Item</Button>
+              </div>
+              <div className="erp-table-container">
+                <table className="w-full text-sm">
+                  <thead><tr className="border-b border-border bg-muted/50">
+                    <th className="text-left px-3 py-2 font-medium text-muted-foreground">Description</th>
+                    <th className="text-center px-3 py-2 font-medium text-muted-foreground w-20">Qty</th>
+                    <th className="text-center px-3 py-2 font-medium text-muted-foreground w-24">Unit</th>
+                    <th className="text-right px-3 py-2 font-medium text-muted-foreground w-32">Unit Cost</th>
+                    <th className="text-right px-3 py-2 font-medium text-muted-foreground w-32">Subtotal</th>
+                    <th className="w-10"></th>
+                  </tr></thead>
+                  <tbody>
+                    {manualBillLineItems.map((li, i) => (
+                      <tr key={i} className="border-b border-border">
+                        <td className="px-3 py-1"><Input value={li.description} onChange={e => updateManualBillLineItem(i, 'description', e.target.value)} className="h-8 text-sm" /></td>
+                        <td className="px-3 py-1"><Input type="number" value={li.qty} onChange={e => updateManualBillLineItem(i, 'qty', parseFloat(e.target.value) || 0)} className="h-8 text-sm text-center" /></td>
+                        <td className="px-3 py-1"><Input value={li.unit} onChange={e => updateManualBillLineItem(i, 'unit', e.target.value)} className="h-8 text-sm text-center" /></td>
+                        <td className="px-3 py-1"><Input type="number" value={li.unitCost || ''} onChange={e => updateManualBillLineItem(i, 'unitCost', parseFloat(e.target.value) || 0)} className="h-8 text-sm text-right" /></td>
+                        <td className="px-3 py-1 text-right font-mono text-sm">{formatUSD(li.qty * li.unitCost)}</td>
+                        <td className="px-3 py-1"><Button variant="ghost" size="sm" onClick={() => removeManualBillLineItem(i)}><Trash2 className="w-3 h-3 text-destructive" /></Button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Bill Totals */}
+            <div className="p-3 bg-background rounded-lg border border-border">
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <p className="text-muted-foreground">Subtotal</p>
+                <p className="text-right font-mono">{formatUSD(manualBillSubtotal)} | {formatIQD(manualBillSubtotal * fxRate)}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-muted-foreground">Tax Rate %</p>
+                  <Input type="number" value={billTaxRate || ''} onChange={e => setBillTaxRate(parseFloat(e.target.value) || 0)} className="h-7 w-20 text-sm" />
+                </div>
+                <p className="text-right font-mono">{formatUSD(manualBillTaxAmount)} | {formatIQD(manualBillTaxAmount * fxRate)}</p>
+                <p className="font-semibold">Total</p>
+                <p className="text-right font-mono font-semibold">{formatUSD(manualBillTotal)} | {formatIQD(manualBillTotal * fxRate)}</p>
+              </div>
+            </div>
+
+            <div>
+              <Label className="text-xs">Vendor Invoice Ref / Notes</Label>
+              <Input value={billNotes} onChange={e => setBillNotes(e.target.value)} placeholder="Vendor invoice reference #..." />
+            </div>
+
+            <Button onClick={handleAddManualBill} disabled={insertBill.isPending || !manualBillVendorId} size="lg">
+              <FileDown className="w-4 h-4 mr-2" />Create Vendor Bill
+            </Button>
           </div>
         )}
       </div>
