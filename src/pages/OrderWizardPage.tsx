@@ -142,7 +142,7 @@ export default function OrderWizardPage() {
         {currentStep === 5 && <Step5 quotations={quotations} />}
         {currentStep === 6 && <Step6 order={order} onSave={saveOrderField} />}
         {currentStep === 7 && <Step7 order={order} quotations={quotations} costs={costs} invoices={invoices} vendorBills={vendorBills} insertInvoice={insertInvoice} insertBill={insertBill} customerName={customerName} vendors={vendors} payments={payments} customers={customers} employees={employees} partners={partners} companySettings={companySettings} />}
-        {currentStep === 8 && <Step8 invoices={invoices} vendorBills={vendorBills} orderId={order.id} quotations={quotations} vendors={vendors} customers={customers} />}
+        {currentStep === 8 && <Step8 invoices={invoices} vendorBills={vendorBills} orderId={order.id} vendors={vendors} customers={customers} />}
         {currentStep === 9 && <Step9 order={order} costs={costs} invoices={invoices} onSave={saveOrderField} />}
       </div>
 
@@ -1244,18 +1244,45 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
     if (!quotation) { toast.error('Generate quotation first (Step 4)'); return; }
     if (invoiceLineItems.length === 0) { toast.error('Add at least one line item'); return; }
     const year = new Date().getFullYear();
-    const invNo = `INV-${year}-${String(invoices.length + 1).padStart(4, '0')}`;
     const totalUsd = invoiceTotal;
-    const totalIqd = Math.round(totalUsd * fxRate);
-    await insertInvoice.mutateAsync({
-      invoice_no: invNo, order_id: order.id, customer_id: order.customer_id,
-      status: 'issued', amount_usd: totalUsd, amount_iqd: totalIqd,
-      fx_rate: fxRate, fx_date: quotation.fx_date || new Date().toISOString().split('T')[0],
-      is_fx_locked: true,
-      issued_date: invoiceDate,
-      due_date: invoiceDueDate,
-    });
-    toast.success('Invoice generated');
+
+    if (quotationPaymentTerms.length > 0) {
+      // Generate one invoice per payment term
+      let created = 0;
+      for (let i = 0; i < quotationPaymentTerms.length; i++) {
+        const term = quotationPaymentTerms[i];
+        const pct = term.percentage || 0;
+        const termUsd = Math.round(totalUsd * (pct / 100) * 100) / 100;
+        const termIqd = Math.round(termUsd * fxRate);
+        const invNo = `INV-${year}-${String(invoices.length + created + 1).padStart(4, '0')}`;
+        // Calculate due date: offset from invoice date based on term index
+        const termDueDays = (customer.payment_terms_days || 30) * (i + 1);
+        const termDueDate = new Date(new Date(invoiceDate).getTime() + termDueDays * 86400000).toISOString().split('T')[0];
+        try {
+          await insertInvoice.mutateAsync({
+            invoice_no: invNo, order_id: order.id, customer_id: order.customer_id,
+            status: 'issued', amount_usd: termUsd, amount_iqd: termIqd,
+            fx_rate: fxRate, fx_date: quotation.fx_date || new Date().toISOString().split('T')[0],
+            is_fx_locked: true, issued_date: invoiceDate, due_date: termDueDate,
+          });
+          created++;
+        } catch (err: any) {
+          toast.error(`Failed to create invoice for term ${i + 1}: ${err.message}`);
+        }
+      }
+      if (created > 0) toast.success(`${created} invoice(s) generated based on payment terms`);
+    } else {
+      // Single invoice (no payment terms)
+      const invNo = `INV-${year}-${String(invoices.length + 1).padStart(4, '0')}`;
+      const totalIqd = Math.round(totalUsd * fxRate);
+      await insertInvoice.mutateAsync({
+        invoice_no: invNo, order_id: order.id, customer_id: order.customer_id,
+        status: 'issued', amount_usd: totalUsd, amount_iqd: totalIqd,
+        fx_rate: fxRate, fx_date: quotation.fx_date || new Date().toISOString().split('T')[0],
+        is_fx_locked: true, issued_date: invoiceDate, due_date: invoiceDueDate,
+      });
+      toast.success('Invoice generated');
+    }
   };
 
   const handleGenerateBills = async () => {
@@ -1445,27 +1472,37 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
               </div>
             </div>
 
-            {/* Payment Terms from Quotation */}
+            {/* Payment Terms — shows how invoices will be split */}
             {quotationPaymentTerms.length > 0 && (
-              <div>
-                <p className="text-sm font-semibold mb-2">Payment Terms (from quotation)</p>
+              <div className="p-3 bg-primary/5 rounded-lg border border-primary/20">
+                <p className="text-sm font-semibold mb-2">📋 Invoices will be split by Payment Terms</p>
+                <p className="text-xs text-muted-foreground mb-2">One invoice per term — each with its own amount, due date, and payment tracking.</p>
                 <div className="erp-table-container">
                   <table className="w-full text-sm">
                     <thead><tr className="border-b border-border bg-muted/50">
-                      <th className="text-left px-3 py-2 font-medium text-muted-foreground">#</th>
+                      <th className="text-left px-3 py-2 font-medium text-muted-foreground">Invoice #</th>
                       <th className="text-left px-3 py-2 font-medium text-muted-foreground">Description</th>
                       <th className="text-right px-3 py-2 font-medium text-muted-foreground">%</th>
-                      <th className="text-right px-3 py-2 font-medium text-muted-foreground">Amount</th>
+                      <th className="text-right px-3 py-2 font-medium text-muted-foreground">Amount USD</th>
+                      <th className="text-right px-3 py-2 font-medium text-muted-foreground">Amount IQD</th>
+                      <th className="text-left px-3 py-2 font-medium text-muted-foreground">Due Date</th>
                     </tr></thead>
                     <tbody>
-                      {quotationPaymentTerms.map((t: any, i: number) => (
-                        <tr key={t.id} className="border-b border-border">
-                          <td className="px-3 py-2">{i + 1}</td>
-                          <td className="px-3 py-2">{t.description}</td>
-                          <td className="px-3 py-2 text-right font-mono">{t.percentage}%</td>
-                          <td className="px-3 py-2 text-right font-mono">{formatUSD(invoiceTotal * ((t.percentage || 0) / 100))}</td>
-                        </tr>
-                      ))}
+                      {quotationPaymentTerms.map((t: any, i: number) => {
+                        const termUsd = Math.round(invoiceTotal * ((t.percentage || 0) / 100) * 100) / 100;
+                        const termDueDays = (customer.payment_terms_days || 30) * (i + 1);
+                        const termDueDate = new Date(new Date(invoiceDate).getTime() + termDueDays * 86400000).toISOString().split('T')[0];
+                        return (
+                          <tr key={t.id} className="border-b border-border">
+                            <td className="px-3 py-2 font-mono text-xs text-primary">INV-{new Date().getFullYear()}-{String(invoices.length + i + 1).padStart(4, '0')}</td>
+                            <td className="px-3 py-2">{t.description || `Installment ${i + 1}`}</td>
+                            <td className="px-3 py-2 text-right font-mono">{t.percentage}%</td>
+                            <td className="px-3 py-2 text-right font-mono">{formatUSD(termUsd)}</td>
+                            <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(termUsd * fxRate)}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{termDueDate}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1492,7 +1529,8 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
             {/* Generate Invoice Button */}
             <div className="flex gap-3">
               <Button onClick={handleGenerateInvoice} disabled={insertInvoice.isPending || invoiceLineItems.length === 0} size="lg">
-                <FileDown className="w-4 h-4 mr-2" />Generate Invoice
+                <FileDown className="w-4 h-4 mr-2" />
+                {quotationPaymentTerms.length > 0 ? `Generate ${quotationPaymentTerms.length} Invoices (by Payment Terms)` : 'Generate Invoice'}
               </Button>
             </div>
           </div>
@@ -1524,37 +1562,7 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
                     </div>
                   </div>
 
-                  {/* Installment schedule */}
-                  {quotationPaymentTerms.length > 0 && (
-                    <div className="border-t border-border px-4 py-3">
-                      <p className="text-xs font-semibold text-muted-foreground mb-2">Installment Schedule</p>
-                      <table className="w-full text-xs">
-                        <thead><tr className="border-b border-border">
-                          <th className="text-left py-1 font-medium text-muted-foreground">Term #</th>
-                          <th className="text-left py-1 font-medium text-muted-foreground">Due Date</th>
-                          <th className="text-right py-1 font-medium text-muted-foreground">Amount</th>
-                          <th className="text-center py-1 font-medium text-muted-foreground">Status</th>
-                        </tr></thead>
-                        <tbody>
-                          {quotationPaymentTerms.map((term: any, idx: number) => {
-                            const termAmountUsd = inv.amount_usd * ((term.percentage || 0) / 100);
-                            const paidUsd = idx < arPayments.length ? arPayments[idx]?.amount_usd || 0 : 0;
-                            const termStatus = paidUsd >= termAmountUsd ? 'paid' : paidUsd > 0 ? 'partial' : 'pending';
-                            return (
-                              <tr key={term.id} className="border-b border-border">
-                                <td className="py-1">{idx + 1}</td>
-                                <td className="py-1 text-muted-foreground">{inv.due_date || '—'}</td>
-                                <td className="py-1 text-right font-mono">{formatUSD(termAmountUsd)}</td>
-                                <td className="py-1 text-center"><StatusBadge status={termStatus} /></td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
 
-                  {/* Invoice Actions */}
                   <div className="border-t border-border px-4 py-2 flex flex-wrap gap-2 bg-muted/30">
                     <Button variant="ghost" size="sm" onClick={() => handleDownloadInvoicePdf(inv)}>
                       <Eye className="w-3.5 h-3.5 mr-1" />Preview
@@ -1887,7 +1895,7 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
   );
 }
 
-function Step8({ invoices, vendorBills, orderId, quotations, vendors, customers }: any) {
+function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
   const insertPayment = useInsertMutation('payments');
   const updateInvoice = useUpdateMutation('invoices');
   const updateBill = useUpdateMutation('vendor_bills');
@@ -1896,23 +1904,12 @@ function Step8({ invoices, vendorBills, orderId, quotations, vendors, customers 
   const arPayments = payments.filter((p: any) => p.direction === 'AR');
   const apPayments = payments.filter((p: any) => p.direction === 'AP');
 
-  // Get quotation payment terms for AR installments
-  const quotation = quotations?.[0];
-  const { data: quotationPaymentTerms = [] } = useQuery({
-    queryKey: ['quotation_payment_terms_step8', quotation?.id],
-    queryFn: async () => {
-      if (!quotation?.id) return [];
-      const { data, error } = await (supabase.from('quotation_payment_terms') as any).select('*').eq('quotation_id', quotation.id);
-      if (error) throw error;
-      return data || [];
-    },
-    enabled: !!quotation?.id,
-  });
+
+
 
   // AR payment form
   const [arForm, setArForm] = useState({
     ref_id: '',
-    term_index: 0,
     amount_usd: 0,
     currency_input: 'USD',
     method: 'bank_transfer',
@@ -1998,20 +1995,8 @@ function Step8({ invoices, vendorBills, orderId, quotations, vendors, customers 
     toast.success('AP payment recorded');
   };
 
-  // Build installment schedule for each invoice
-  const buildInstallments = (inv: any) => {
-    if (!quotationPaymentTerms.length) return [];
-    const invArPayments = arPayments.filter((p: any) => p.ref_id === inv.id);
-    let cumulativePaid = 0;
-    return quotationPaymentTerms.map((term: any, idx: number) => {
-      const termAmountUsd = inv.amount_usd * ((term.percentage || 0) / 100);
-      const allocated = Math.min(termAmountUsd, Math.max(0, invArPayments.reduce((s: number, p: any) => s + p.amount_usd, 0) - cumulativePaid));
-      cumulativePaid += termAmountUsd;
-      const paidForTerm = Math.min(termAmountUsd, Math.max(0, (inv.paid_usd || 0) - (idx > 0 ? quotationPaymentTerms.slice(0, idx).reduce((s: any, t: any) => s + inv.amount_usd * ((t.percentage || 0) / 100), 0) : 0)));
-      const status = paidForTerm >= termAmountUsd ? 'paid' : paidForTerm > 0 ? 'partial' : 'pending';
-      return { ...term, termAmountUsd, paidForTerm, status, idx };
-    });
-  };
+
+
 
   return (
     <div className="space-y-6">
@@ -2024,11 +2009,10 @@ function Step8({ invoices, vendorBills, orderId, quotations, vendors, customers 
           <h4 className="text-base font-semibold">Accounts Receivable — Customer Payments</h4>
         </div>
 
-        {/* Invoice cards with installment schedule */}
+        {/* Invoice cards */}
         {invoices.map((inv: any) => {
           const customer = customers?.find((c: any) => c.id === inv.customer_id);
           const dueUsd = (inv.amount_usd || 0) - (inv.paid_usd || 0);
-          const installments = buildInstallments(inv);
           const invPayments = arPayments.filter((p: any) => p.ref_id === inv.id);
 
           return (
@@ -2046,34 +2030,6 @@ function Step8({ invoices, vendorBills, orderId, quotations, vendors, customers 
                 </div>
               </div>
 
-              {/* Installment Schedule */}
-              {installments.length > 0 && (
-                <div className="border-t border-border px-4 py-3 bg-muted/20">
-                  <p className="text-xs font-semibold text-muted-foreground mb-2">📋 Payment Terms Schedule</p>
-                  <table className="w-full text-xs">
-                    <thead><tr className="border-b border-border">
-                      <th className="text-left py-1 font-medium text-muted-foreground">Term</th>
-                      <th className="text-left py-1 font-medium text-muted-foreground">Description</th>
-                      <th className="text-right py-1 font-medium text-muted-foreground">%</th>
-                      <th className="text-right py-1 font-medium text-muted-foreground">Amount</th>
-                      <th className="text-right py-1 font-medium text-muted-foreground">Paid</th>
-                      <th className="text-center py-1 font-medium text-muted-foreground">Status</th>
-                    </tr></thead>
-                    <tbody>
-                      {installments.map((inst: any) => (
-                        <tr key={inst.id} className="border-b border-border">
-                          <td className="py-1.5">#{inst.idx + 1}</td>
-                          <td className="py-1.5 text-muted-foreground">{inst.description || `Installment ${inst.idx + 1}`}</td>
-                          <td className="py-1.5 text-right font-mono">{inst.percentage}%</td>
-                          <td className="py-1.5 text-right font-mono">{formatUSD(inst.termAmountUsd)}</td>
-                          <td className="py-1.5 text-right font-mono text-emerald-600">{formatUSD(inst.paidForTerm)}</td>
-                          <td className="py-1.5 text-center"><StatusBadge status={inst.status} /></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
 
               {/* AR Payments for this invoice */}
               {invPayments.length > 0 && (
