@@ -1130,14 +1130,41 @@ function Step6({ order, onSave }: any) {
   );
 }
 
-function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice, insertBill, customerName, vendors }: any) {
+function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice, insertBill, customerName, vendors, payments, customers }: any) {
+  const queryClient = useQueryClient();
   const quotation = quotations[0];
   const fxRate = quotation?.fx_rate || DEFAULT_FX_RATE;
+  const customer = customers?.find((c: any) => c.id === order.customer_id) || {};
+
+  // Fetch quotation payment terms
+  const { data: quotationPaymentTerms = [] } = useQuery({
+    queryKey: ['quotation_payment_terms', quotation?.id],
+    queryFn: async () => {
+      if (!quotation?.id) return [];
+      const { data, error } = await (supabase.from('quotation_payment_terms') as any).select('*').eq('quotation_id', quotation.id);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!quotation?.id,
+  });
+
+  // Vendor costs (exclude commission/incentive)
+  const vendorCosts = costs.filter((c: any) => c.category !== 'partner_commission' && c.category !== 'employee_incentive');
+  const commCosts = costs.filter((c: any) => c.category === 'partner_commission' || c.category === 'employee_incentive');
+
+  // Payment intents info
+  const arPayments = payments.filter((p: any) => p.direction === 'AR');
+  const apPayments = payments.filter((p: any) => p.direction === 'AP');
+
+  // Totals
+  const totalArUsd = invoices.reduce((s: number, i: any) => s + (i.amount_usd || 0), 0);
+  const totalApUsd = vendorBills.reduce((s: number, b: any) => s + (b.amount_usd || 0), 0);
+  const profitUsd = totalArUsd - totalApUsd;
 
   const handleGenerateInvoice = async () => {
     if (!quotation) { toast.error('Generate quotation first'); return; }
     const year = new Date().getFullYear();
-    const invNo = `INV-${year}-${String(invoices.length + 1).padStart(4, '0')}`;
+    const invNo = `INV-${order.order_no}`;
     await insertInvoice.mutateAsync({
       invoice_no: invNo, order_id: order.id, customer_id: order.customer_id,
       status: 'issued', amount_usd: quotation.total_usd, amount_iqd: quotation.total_iqd,
@@ -1145,20 +1172,22 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
       issued_date: new Date().toISOString().split('T')[0],
       due_date: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
     });
-    generateInvoicePDF({ invoiceNo: invNo, customerName, order, totalUsd: quotation.total_usd, totalIqd: quotation.total_iqd, fxRate, fxDate: quotation.fx_date });
     toast.success('Invoice generated');
   };
 
   const handleGenerateBills = async () => {
     const vendorGroups: Record<string, any[]> = {};
-    costs.forEach((c: any) => { if (c.vendor_id) { if (!vendorGroups[c.vendor_id]) vendorGroups[c.vendor_id] = []; vendorGroups[c.vendor_id].push(c); } });
+    vendorCosts.forEach((c: any) => { if (c.vendor_id) { if (!vendorGroups[c.vendor_id]) vendorGroups[c.vendor_id] = []; vendorGroups[c.vendor_id].push(c); } });
+    // Also add commission/incentive costs as INTERNAL_PAYABLES
+    const internalCosts = commCosts.filter((c: any) => c.amount_usd > 0);
+
     const year = new Date().getFullYear();
     let idx = vendorBills.length;
-    for (const [vendorId, vendorCosts] of Object.entries(vendorGroups)) {
+    for (const [vendorId, vCosts] of Object.entries(vendorGroups)) {
       idx++;
-      const totalUsd = vendorCosts.reduce((s: number, c: any) => s + c.amount_usd, 0);
-      const totalIqd = vendorCosts.reduce((s: number, c: any) => s + c.amount_iqd, 0);
-      const billNo = `BILL-${year}-${String(idx).padStart(4, '0')}`;
+      const totalUsd = (vCosts as any[]).reduce((s: number, c: any) => s + c.amount_usd, 0);
+      const totalIqd = (vCosts as any[]).reduce((s: number, c: any) => s + c.amount_iqd, 0);
+      const billNo = `BILL-${order.order_no}`;
       await insertBill.mutateAsync({
         bill_no: billNo, order_id: order.id, vendor_id: vendorId,
         status: 'issued', amount_usd: totalUsd, amount_iqd: totalIqd,
@@ -1166,20 +1195,267 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
         issued_date: new Date().toISOString().split('T')[0],
         due_date: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
       });
-      const vendorName = vendors.find((v: any) => v.id === vendorId)?.company || '';
-      generateVendorBillPDF({ billNo, vendorName, order, totalUsd, totalIqd, fxRate, fxDate: new Date().toISOString().split('T')[0], costs: vendorCosts });
     }
+
+    // Generate internal payable bills for commissions
+    for (const ic of internalCosts) {
+      idx++;
+      const billNo = `BILL-${order.order_no}`;
+      await insertBill.mutateAsync({
+        bill_no: billNo, order_id: order.id, vendor_id: null,
+        status: 'issued', amount_usd: ic.amount_usd, amount_iqd: ic.amount_iqd,
+        fx_rate: fxRate, fx_date: new Date().toISOString().split('T')[0], is_fx_locked: true,
+        issued_date: new Date().toISOString().split('T')[0],
+        due_date: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+      });
+    }
+
     toast.success('Vendor bills generated');
   };
 
+  const handleDownloadInvoicePdf = (inv: any) => {
+    generateInvoicePDF({
+      invoiceNo: inv.invoice_no, customerName, order,
+      totalUsd: inv.amount_usd, totalIqd: inv.amount_iqd,
+      fxRate: inv.fx_rate, fxDate: inv.fx_date,
+    });
+  };
+
+  const handleDownloadBillPdf = (bill: any) => {
+    const billCosts = vendorCosts.filter((c: any) => c.vendor_id === bill.vendor_id);
+    const vendorName = vendors.find((v: any) => v.id === bill.vendor_id)?.company || 'INTERNAL_PAYABLES';
+    generateVendorBillPDF({
+      billNo: bill.bill_no, vendorName, order,
+      totalUsd: bill.amount_usd, totalIqd: bill.amount_iqd,
+      fxRate: bill.fx_rate, fxDate: bill.fx_date, costs: billCosts,
+    });
+  };
+
+  const hasInvoices = invoices.length > 0;
+  const hasBills = vendorBills.length > 0;
+
   return (
-    <div className="space-y-4">
-      <h3 className="text-lg font-semibold">Step 7 — Invoice & Vendor Bills</h3>
-      {invoices.length > 0 && <p className="text-sm text-accent-foreground bg-accent p-3 rounded-lg">✅ Invoice: {invoices[0].invoice_no}</p>}
-      {vendorBills.length > 0 && <p className="text-sm text-accent-foreground bg-accent p-3 rounded-lg">✅ {vendorBills.length} vendor bill(s) generated</p>}
-      <div className="grid grid-cols-2 gap-4">
-        <Button onClick={handleGenerateInvoice} disabled={insertInvoice.isPending || !quotation}><FileDown className="w-4 h-4 mr-2" />Generate Invoice</Button>
-        <Button variant="outline" onClick={handleGenerateBills} disabled={insertBill.isPending || costs.length === 0}><FileDown className="w-4 h-4 mr-2" />Generate Vendor Bills</Button>
+    <div className="space-y-6">
+      <h3 className="text-lg font-semibold">Step 7 — Issue Docs AR/AP</h3>
+      <p className="text-sm text-muted-foreground">Auto create invoices & vendor bills</p>
+
+      {/* Payment Intents Created */}
+      {(hasInvoices || hasBills) && (
+        <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg space-y-1">
+          <p className="text-sm font-medium flex items-center gap-2">
+            <span className="w-5 h-5 rounded-full border-2 border-blue-400 flex items-center justify-center text-blue-500 text-xs">○</span>
+            Payment Intents Created
+          </p>
+          {hasInvoices && (
+            <p className="text-xs text-muted-foreground ml-7">• {invoices.length} AR PaymentIntent(s): {invoices.map((i: any) => `PI: ${i.invoice_no}`).join(', ')}</p>
+          )}
+          {hasBills && (
+            <p className="text-xs text-muted-foreground ml-7">• {vendorBills.length} AP PaymentIntent(s): {vendorBills.map((b: any) => `PI: ${b.bill_no}`).join(', ')}</p>
+          )}
+          <p className="text-xs text-muted-foreground ml-7">✓ Payments can now be recorded in Step 7 without risk of duplication</p>
+        </div>
+      )}
+
+      {/* Warning to issue docs */}
+      {(!hasInvoices || !hasBills) && (
+        <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+          <p className="text-sm text-red-700 font-medium">⚠ Issue Invoices (AR) and vendor bills (AP) to proceed</p>
+        </div>
+      )}
+
+      {/* Generate buttons */}
+      {(!hasInvoices || !hasBills) && (
+        <div className="grid grid-cols-2 gap-4">
+          <Button onClick={handleGenerateInvoice} disabled={insertInvoice.isPending || !quotation || hasInvoices}>
+            <FileDown className="w-4 h-4 mr-2" />Generate Invoice
+          </Button>
+          <Button variant="outline" onClick={handleGenerateBills} disabled={insertBill.isPending || costs.length === 0 || hasBills}>
+            <FileDown className="w-4 h-4 mr-2" />Generate Vendor Bills
+          </Button>
+        </div>
+      )}
+
+      {/* ===== INVOICES (AR) ===== */}
+      {hasInvoices && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 rounded bg-blue-100 flex items-center justify-center"><span className="text-xs font-bold text-blue-700">$</span></div>
+            <h4 className="text-sm font-semibold">Invoices (AR)</h4>
+          </div>
+
+          {invoices.map((inv: any) => {
+            const dueUsd = (inv.amount_usd || 0) - (inv.paid_usd || 0);
+            return (
+              <div key={inv.id} className="border border-border rounded-lg overflow-hidden">
+                <div className="p-4 flex justify-between items-start">
+                  <div>
+                    <p className="font-mono font-semibold text-base">{inv.invoice_no}</p>
+                    <p className="text-xs text-muted-foreground">{formatUSD(inv.amount_usd)}</p>
+                    <p className="text-xs text-muted-foreground">Issued: {inv.issued_date} • Due: {inv.due_date}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xl font-bold text-primary">{formatUSD(inv.amount_usd)}</p>
+                    <p className="text-xs text-muted-foreground">Due: {formatUSD(dueUsd)}</p>
+                    <StatusBadge status={inv.status} />
+                  </div>
+                </div>
+                <div className="border-t border-border px-4 py-2 flex gap-2 bg-muted/30">
+                  <Button variant="ghost" size="sm" onClick={() => toast.info('Open invoice view')}>
+                    <Eye className="w-3.5 h-3.5 mr-1" />Open Invoice
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => handleDownloadInvoicePdf(inv)}>
+                    <FileDown className="w-3.5 h-3.5 mr-1" />Download PDF
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => window.print()}>
+                    🖨 Print
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: ['invoices'] })}>
+                    🔄
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* AR Payment Terms */}
+          {quotationPaymentTerms.length > 0 && (
+            <div className="space-y-2">
+              <h4 className="text-sm font-semibold">AR Payment Terms</h4>
+              <div className="erp-table-container">
+                <table className="w-full text-sm">
+                  <thead><tr className="border-b border-border bg-muted/50">
+                    <th className="text-left px-4 py-2 font-medium text-muted-foreground">Term #</th>
+                    <th className="text-left px-4 py-2 font-medium text-muted-foreground">Due Date</th>
+                    <th className="text-right px-4 py-2 font-medium text-muted-foreground">Amount</th>
+                    <th className="text-right px-4 py-2 font-medium text-muted-foreground">Paid</th>
+                    <th className="text-right px-4 py-2 font-medium text-muted-foreground">Due</th>
+                    <th className="text-center px-4 py-2 font-medium text-muted-foreground">Status</th>
+                  </tr></thead>
+                  <tbody>
+                    {quotationPaymentTerms.map((term: any, idx: number) => {
+                      const termAmountUsd = term.amount_usd || (quotation?.total_usd || 0) * ((term.percentage || 0) / 100);
+                      // Find matching AR payments for this term
+                      const paidUsd = idx < arPayments.length ? arPayments[idx]?.amount_usd || 0 : 0;
+                      const dueUsd = termAmountUsd - paidUsd;
+                      const termStatus = paidUsd >= termAmountUsd ? 'paid' : paidUsd > 0 ? 'partial' : 'pending';
+                      return (
+                        <tr key={term.id} className="border-b border-border">
+                          <td className="px-4 py-2">{term.percentage || idx + 1}</td>
+                          <td className="px-4 py-2 text-muted-foreground">{invoices[0]?.due_date || '—'}</td>
+                          <td className="px-4 py-2 text-right font-mono">{formatUSD(termAmountUsd)}</td>
+                          <td className="px-4 py-2 text-right font-mono text-emerald-600">{formatUSD(paidUsd)}</td>
+                          <td className="px-4 py-2 text-right font-mono">{formatUSD(dueUsd)}</td>
+                          <td className="px-4 py-2 text-center"><StatusBadge status={termStatus} /></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ===== VENDOR BILLS (AP) ===== */}
+      {hasBills && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 rounded bg-amber-100 flex items-center justify-center"><span className="text-xs font-bold text-amber-700">📋</span></div>
+            <h4 className="text-sm font-semibold">Vendor Bills (AP)</h4>
+          </div>
+
+          <div className="erp-table-container">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-border bg-muted/50">
+                <th className="text-left px-4 py-2 font-medium text-muted-foreground">Bill #</th>
+                <th className="text-left px-4 py-2 font-medium text-muted-foreground">Vendor</th>
+                <th className="text-left px-4 py-2 font-medium text-muted-foreground">Date</th>
+                <th className="text-left px-4 py-2 font-medium text-muted-foreground">Due Date</th>
+                <th className="text-right px-4 py-2 font-medium text-muted-foreground">Total</th>
+                <th className="text-right px-4 py-2 font-medium text-muted-foreground">Due</th>
+                <th className="text-center px-4 py-2 font-medium text-muted-foreground">Status</th>
+              </tr></thead>
+              <tbody>
+                {vendorBills.map((bill: any) => {
+                  const vendorName = vendors.find((v: any) => v.id === bill.vendor_id)?.company || 'INTERNAL_PAYABLES';
+                  const dueUsd = (bill.amount_usd || 0) - (bill.paid_usd || 0);
+                  const billStatus = (bill.paid_usd || 0) >= bill.amount_usd ? 'paid' : (bill.paid_usd || 0) > 0 ? 'partial' : bill.status;
+                  return (
+                    <tr key={bill.id} className="border-b border-border hover:bg-muted/30 transition-colors">
+                      <td className="px-4 py-2 font-mono font-medium text-primary cursor-pointer" onClick={() => handleDownloadBillPdf(bill)}>{bill.bill_no}</td>
+                      <td className="px-4 py-2">{vendorName}</td>
+                      <td className="px-4 py-2 text-muted-foreground">{bill.issued_date || '—'}</td>
+                      <td className="px-4 py-2 text-muted-foreground">{bill.due_date || '—'}</td>
+                      <td className="px-4 py-2 text-right font-mono">{formatUSD(bill.amount_usd)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-orange-600">{formatUSD(dueUsd)}</td>
+                      <td className="px-4 py-2 text-center"><StatusBadge status={billStatus} /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* AP Payment Terms */}
+          <div className="space-y-2">
+            <h4 className="text-sm font-semibold">AP Payment Terms</h4>
+            <div className="erp-table-container">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b border-border bg-muted/50">
+                  <th className="text-left px-4 py-2 font-medium text-muted-foreground">Term #</th>
+                  <th className="text-left px-4 py-2 font-medium text-muted-foreground">Due Date</th>
+                  <th className="text-right px-4 py-2 font-medium text-muted-foreground">Amount</th>
+                  <th className="text-right px-4 py-2 font-medium text-muted-foreground">Paid</th>
+                  <th className="text-right px-4 py-2 font-medium text-muted-foreground">Due</th>
+                  <th className="text-center px-4 py-2 font-medium text-muted-foreground">Status</th>
+                </tr></thead>
+                <tbody>
+                  {vendorBills.map((bill: any, idx: number) => {
+                    const paidUsd = bill.paid_usd || 0;
+                    const dueUsd = (bill.amount_usd || 0) - paidUsd;
+                    const termStatus = paidUsd >= bill.amount_usd ? 'paid' : paidUsd > 0 ? 'partial' : 'pending';
+                    return (
+                      <tr key={bill.id} className="border-b border-border">
+                        <td className="px-4 py-2">{idx + 1}</td>
+                        <td className="px-4 py-2 text-muted-foreground">{bill.due_date || '—'}</td>
+                        <td className="px-4 py-2 text-right font-mono">{formatUSD(bill.amount_usd)}</td>
+                        <td className="px-4 py-2 text-right font-mono text-emerald-600">{formatUSD(paidUsd)}</td>
+                        <td className="px-4 py-2 text-right font-mono">{formatUSD(dueUsd)}</td>
+                        <td className="px-4 py-2 text-center"><StatusBadge status={termStatus} /></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== SUMMARY FOOTER ===== */}
+      {(hasInvoices || hasBills) && (
+        <div className="grid grid-cols-3 gap-4 p-4 bg-gradient-to-r from-emerald-50 via-amber-50 to-emerald-50 rounded-lg border border-border">
+          <div className="text-center">
+            <p className="text-xs text-muted-foreground mb-1">Total AR</p>
+            <p className="text-lg font-bold text-emerald-600">{formatUSD(totalArUsd)}</p>
+          </div>
+          <div className="text-center">
+            <p className="text-xs text-muted-foreground mb-1">Total AP</p>
+            <p className="text-lg font-bold text-red-500">{formatUSD(totalApUsd)}</p>
+          </div>
+          <div className="text-center">
+            <p className="text-xs text-muted-foreground mb-1">Profit</p>
+            <p className={`text-lg font-bold ${profitUsd >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{formatUSD(profitUsd)}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Go to Accounting Center */}
+      <div className="text-center">
+        <Button variant="outline" onClick={() => toast.info('Accounting center coming soon')}>
+          📊 Go to Accounting Center ↗
+        </Button>
       </div>
     </div>
   );
