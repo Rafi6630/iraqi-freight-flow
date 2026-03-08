@@ -1,12 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Check, ChevronRight, Lock, Plus, Trash2, FileDown } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, Lock, Plus, Trash2, FileDown, Eye, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { CurrencyDisplay } from '@/components/CurrencyDisplay';
 import { FxLockedBadge } from '@/components/FxLockedBadge';
 import { cn } from '@/lib/utils';
