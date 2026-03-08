@@ -1472,27 +1472,37 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
               </div>
             </div>
 
-            {/* Payment Terms from Quotation */}
+            {/* Payment Terms — shows how invoices will be split */}
             {quotationPaymentTerms.length > 0 && (
-              <div>
-                <p className="text-sm font-semibold mb-2">Payment Terms (from quotation)</p>
+              <div className="p-3 bg-primary/5 rounded-lg border border-primary/20">
+                <p className="text-sm font-semibold mb-2">📋 Invoices will be split by Payment Terms</p>
+                <p className="text-xs text-muted-foreground mb-2">One invoice per term — each with its own amount, due date, and payment tracking.</p>
                 <div className="erp-table-container">
                   <table className="w-full text-sm">
                     <thead><tr className="border-b border-border bg-muted/50">
-                      <th className="text-left px-3 py-2 font-medium text-muted-foreground">#</th>
+                      <th className="text-left px-3 py-2 font-medium text-muted-foreground">Invoice #</th>
                       <th className="text-left px-3 py-2 font-medium text-muted-foreground">Description</th>
                       <th className="text-right px-3 py-2 font-medium text-muted-foreground">%</th>
-                      <th className="text-right px-3 py-2 font-medium text-muted-foreground">Amount</th>
+                      <th className="text-right px-3 py-2 font-medium text-muted-foreground">Amount USD</th>
+                      <th className="text-right px-3 py-2 font-medium text-muted-foreground">Amount IQD</th>
+                      <th className="text-left px-3 py-2 font-medium text-muted-foreground">Due Date</th>
                     </tr></thead>
                     <tbody>
-                      {quotationPaymentTerms.map((t: any, i: number) => (
-                        <tr key={t.id} className="border-b border-border">
-                          <td className="px-3 py-2">{i + 1}</td>
-                          <td className="px-3 py-2">{t.description}</td>
-                          <td className="px-3 py-2 text-right font-mono">{t.percentage}%</td>
-                          <td className="px-3 py-2 text-right font-mono">{formatUSD(invoiceTotal * ((t.percentage || 0) / 100))}</td>
-                        </tr>
-                      ))}
+                      {quotationPaymentTerms.map((t: any, i: number) => {
+                        const termUsd = Math.round(invoiceTotal * ((t.percentage || 0) / 100) * 100) / 100;
+                        const termDueDays = (customer.payment_terms_days || 30) * (i + 1);
+                        const termDueDate = new Date(new Date(invoiceDate).getTime() + termDueDays * 86400000).toISOString().split('T')[0];
+                        return (
+                          <tr key={t.id} className="border-b border-border">
+                            <td className="px-3 py-2 font-mono text-xs text-primary">INV-{new Date().getFullYear()}-{String(invoices.length + i + 1).padStart(4, '0')}</td>
+                            <td className="px-3 py-2">{t.description || `Installment ${i + 1}`}</td>
+                            <td className="px-3 py-2 text-right font-mono">{t.percentage}%</td>
+                            <td className="px-3 py-2 text-right font-mono">{formatUSD(termUsd)}</td>
+                            <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(termUsd * fxRate)}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{termDueDate}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1519,7 +1529,8 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
             {/* Generate Invoice Button */}
             <div className="flex gap-3">
               <Button onClick={handleGenerateInvoice} disabled={insertInvoice.isPending || invoiceLineItems.length === 0} size="lg">
-                <FileDown className="w-4 h-4 mr-2" />Generate Invoice
+                <FileDown className="w-4 h-4 mr-2" />
+                {quotationPaymentTerms.length > 0 ? `Generate ${quotationPaymentTerms.length} Invoices (by Payment Terms)` : 'Generate Invoice'}
               </Button>
             </div>
           </div>
