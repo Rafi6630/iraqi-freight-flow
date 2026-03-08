@@ -136,7 +136,7 @@ export default function OrderWizardPage() {
         {currentStep === 5 && <Step5 quotations={quotations} />}
         {currentStep === 6 && <Step6 order={order} onSave={saveOrderField} />}
         {currentStep === 7 && <Step7 order={order} quotations={quotations} costs={costs} invoices={invoices} vendorBills={vendorBills} insertInvoice={insertInvoice} insertBill={insertBill} customerName={customerName} vendors={vendors} />}
-        {currentStep === 8 && <Step8 invoices={invoices} vendorBills={vendorBills} />}
+        {currentStep === 8 && <Step8 invoices={invoices} vendorBills={vendorBills} orderId={order.id} />}
         {currentStep === 9 && <Step9 order={order} costs={costs} invoices={invoices} onSave={saveOrderField} />}
       </div>
 
