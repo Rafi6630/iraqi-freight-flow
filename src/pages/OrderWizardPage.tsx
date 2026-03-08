@@ -199,10 +199,20 @@ export default function OrderWizardPage() {
         {currentStep === 9 && <Step9 order={order} costs={costs} invoices={invoices} onSave={saveOrderField} />}
       </div>
 
-      <div className="flex justify-between">
+      <div className="flex justify-between items-center">
         <Button variant="outline" disabled={currentStep === 1} onClick={() => setCurrentStep(s => s - 1)}>Previous</Button>
         {currentStep === order.status_step && currentStep < 9 && (
-          <Button onClick={advanceStep}>Complete Step & Continue <ChevronRight className="w-4 h-4 ml-1" /></Button>
+          <div className="flex items-center gap-3">
+            {!currentValidation.canAdvance && (
+              <div className="flex items-center gap-1.5 text-sm text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{currentValidation.message}</span>
+              </div>
+            )}
+            <Button onClick={advanceStep} disabled={!currentValidation.canAdvance}>
+              Complete Step & Continue <ChevronRight className="w-4 h-4 ml-1" />
+            </Button>
+          </div>
         )}
       </div>
     </div>
