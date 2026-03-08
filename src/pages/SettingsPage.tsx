@@ -182,7 +182,7 @@ function PaymentMethodsTab() {
   const deleteMethod = useDeleteMutation('payment_methods');
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({
-    method_type: 'bank_transfer', bank_name: '', account_holder_name: '',
+    method_type: 'Bank Transfer', bank_name: '', account_holder_name: '',
     account_number: '', iban: '', swift_code: '', routing_number: '',
     currency: 'USD', is_default: false, notes: '',
   });
