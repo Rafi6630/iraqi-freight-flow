@@ -2108,26 +2108,30 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
               {invPayments.length > 0 && (
                 <div className="border-t border-border px-4 py-3">
                   <p className="text-xs font-semibold text-muted-foreground mb-2">Payment History</p>
-                  <table className="w-full text-xs">
-                    <thead><tr className="border-b border-border">
-                      <th className="text-left py-1 font-medium text-muted-foreground">Pay #</th>
-                      <th className="text-left py-1 font-medium text-muted-foreground">Date</th>
-                      <th className="text-right py-1 font-medium text-muted-foreground">Amount</th>
-                      <th className="text-left py-1 font-medium text-muted-foreground">Method</th>
-                      <th className="text-right py-1 font-medium text-muted-foreground">FX G/L</th>
-                    </tr></thead>
-                    <tbody>
-                      {invPayments.map((p: any) => (
-                        <tr key={p.id} className="border-b border-border">
-                          <td className="py-1 font-mono">{p.pay_no}</td>
-                          <td className="py-1 text-muted-foreground">{p.date}</td>
-                          <td className="py-1 text-right"><CurrencyDisplay usd={p.amount_usd} iqd={p.amount_iqd} size="sm" /></td>
-                          <td className="py-1 capitalize">{p.method?.replace('_', ' ')}</td>
-                          <td className="py-1 text-right"><span className={(p.fx_gain_loss_usd || 0) >= 0 ? 'fx-gain' : 'fx-loss'}>{formatUSD(Math.abs(p.fx_gain_loss_usd || 0))}</span></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                   <table className="w-full text-xs">
+                     <thead><tr className="border-b border-border">
+                       <th className="text-left py-1 font-medium text-muted-foreground">Pay #</th>
+                       <th className="text-left py-1 font-medium text-muted-foreground">Date</th>
+                       <th className="text-right py-1 font-medium text-muted-foreground">Amount</th>
+                       <th className="text-left py-1 font-medium text-muted-foreground">Method</th>
+                       <th className="text-right py-1 font-medium text-muted-foreground">Fee</th>
+                       <th className="text-right py-1 font-medium text-muted-foreground">FX Rate</th>
+                       <th className="text-right py-1 font-medium text-muted-foreground">FX G/L</th>
+                     </tr></thead>
+                     <tbody>
+                       {invPayments.map((p: any) => (
+                         <tr key={p.id} className="border-b border-border">
+                           <td className="py-1 font-mono">{p.pay_no}</td>
+                           <td className="py-1 text-muted-foreground">{p.date}</td>
+                           <td className="py-1 text-right"><CurrencyDisplay usd={p.amount_usd} iqd={p.amount_iqd} size="sm" /></td>
+                           <td className="py-1 capitalize">{p.method?.replace('_', ' ')}</td>
+                           <td className="py-1 text-right">{(p.payment_fee_usd || 0) > 0 ? <span className="text-amber-600">{formatUSD(p.payment_fee_usd)}</span> : '—'}</td>
+                           <td className="py-1 text-right font-mono">{p.fx_rate}</td>
+                           <td className="py-1 text-right"><span className={(p.fx_gain_loss_usd || 0) >= 0 ? 'fx-gain' : 'fx-loss'}>{(p.fx_gain_loss_usd || 0) !== 0 ? `${(p.fx_gain_loss_usd || 0) > 0 ? '+' : ''}${formatUSD(p.fx_gain_loss_usd)}` : '—'}</span></td>
+                         </tr>
+                       ))}
+                     </tbody>
+                   </table>
                 </div>
               )}
             </div>
