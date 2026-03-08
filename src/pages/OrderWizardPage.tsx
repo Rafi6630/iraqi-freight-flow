@@ -57,6 +57,7 @@ export default function OrderWizardPage() {
   const { data: customers = [] } = useTableQuery<any>('customers');
   const { data: employees = [] } = useTableQuery<any>('employees');
   const { data: vendors = [] } = useTableQuery<any>('vendors');
+  const { data: partners = [] } = useTableQuery<any>('partners');
   const { data: costs = [] } = useTableQuery<any>('order_costs', { filter: order?.id ? { order_id: order.id } : undefined });
   const { data: quotations = [] } = useTableQuery<any>('quotations', { filter: order?.id ? { order_id: order.id } : undefined });
   const { data: invoices = [] } = useTableQuery<any>('invoices', { filter: order?.id ? { order_id: order.id } : undefined });
