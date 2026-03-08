@@ -212,10 +212,14 @@ function PaymentMethodsTab() {
                 <Select value={form.method_type} onValueChange={v => set('method_type', v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                    <SelectItem value="cash">Cash</SelectItem>
-                    <SelectItem value="check">Check</SelectItem>
-                    <SelectItem value="mobile_payment">Mobile Payment</SelectItem>
+                    <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                    <SelectItem value="Cash">Cash</SelectItem>
+                    <SelectItem value="Check">Check</SelectItem>
+                    <SelectItem value="Hawala">Hawala (Exchange Office)</SelectItem>
+                    <SelectItem value="Mobile Payment">Mobile Payment</SelectItem>
+                    <SelectItem value="Wire Transfer">Wire Transfer</SelectItem>
+                    <SelectItem value="Credit Card">Credit Card</SelectItem>
+                    <SelectItem value="Other">Other</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
