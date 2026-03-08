@@ -2010,11 +2010,10 @@ function Step8({ invoices, vendorBills, orderId, quotations, vendors, customers 
           <h4 className="text-base font-semibold">Accounts Receivable — Customer Payments</h4>
         </div>
 
-        {/* Invoice cards with installment schedule */}
+        {/* Invoice cards */}
         {invoices.map((inv: any) => {
           const customer = customers?.find((c: any) => c.id === inv.customer_id);
           const dueUsd = (inv.amount_usd || 0) - (inv.paid_usd || 0);
-          const installments = buildInstallments(inv);
           const invPayments = arPayments.filter((p: any) => p.ref_id === inv.id);
 
           return (
@@ -2032,34 +2031,6 @@ function Step8({ invoices, vendorBills, orderId, quotations, vendors, customers 
                 </div>
               </div>
 
-              {/* Installment Schedule */}
-              {installments.length > 0 && (
-                <div className="border-t border-border px-4 py-3 bg-muted/20">
-                  <p className="text-xs font-semibold text-muted-foreground mb-2">📋 Payment Terms Schedule</p>
-                  <table className="w-full text-xs">
-                    <thead><tr className="border-b border-border">
-                      <th className="text-left py-1 font-medium text-muted-foreground">Term</th>
-                      <th className="text-left py-1 font-medium text-muted-foreground">Description</th>
-                      <th className="text-right py-1 font-medium text-muted-foreground">%</th>
-                      <th className="text-right py-1 font-medium text-muted-foreground">Amount</th>
-                      <th className="text-right py-1 font-medium text-muted-foreground">Paid</th>
-                      <th className="text-center py-1 font-medium text-muted-foreground">Status</th>
-                    </tr></thead>
-                    <tbody>
-                      {installments.map((inst: any) => (
-                        <tr key={inst.id} className="border-b border-border">
-                          <td className="py-1.5">#{inst.idx + 1}</td>
-                          <td className="py-1.5 text-muted-foreground">{inst.description || `Installment ${inst.idx + 1}`}</td>
-                          <td className="py-1.5 text-right font-mono">{inst.percentage}%</td>
-                          <td className="py-1.5 text-right font-mono">{formatUSD(inst.termAmountUsd)}</td>
-                          <td className="py-1.5 text-right font-mono text-emerald-600">{formatUSD(inst.paidForTerm)}</td>
-                          <td className="py-1.5 text-center"><StatusBadge status={inst.status} /></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
 
               {/* AR Payments for this invoice */}
               {invPayments.length > 0 && (
