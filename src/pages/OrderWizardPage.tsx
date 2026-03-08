@@ -1451,6 +1451,17 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
           <h4 className="text-base font-semibold">Accounts Receivable — Customer Invoice</h4>
         </div>
 
+        {/* Warning: No payment terms */}
+        {!hasInvoices && quotationPaymentTerms.length === 0 && (
+          <div className="flex items-center gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm">
+            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+            <div>
+              <p className="font-medium text-amber-800">No payment terms defined</p>
+              <p className="text-amber-700">Go back to <strong>Step 4 (Quotation)</strong> and add payment terms to split invoices into installments. Without payment terms, a single invoice will be generated for the full amount.</p>
+            </div>
+          </div>
+        )}
+
         {/* Invoice Generation Form */}
         {!hasInvoices && (
           <div className="space-y-4 p-4 bg-muted/30 rounded-lg border border-border">
