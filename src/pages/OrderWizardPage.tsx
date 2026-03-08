@@ -1562,37 +1562,7 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
                     </div>
                   </div>
 
-                  {/* Installment schedule */}
-                  {quotationPaymentTerms.length > 0 && (
-                    <div className="border-t border-border px-4 py-3">
-                      <p className="text-xs font-semibold text-muted-foreground mb-2">Installment Schedule</p>
-                      <table className="w-full text-xs">
-                        <thead><tr className="border-b border-border">
-                          <th className="text-left py-1 font-medium text-muted-foreground">Term #</th>
-                          <th className="text-left py-1 font-medium text-muted-foreground">Due Date</th>
-                          <th className="text-right py-1 font-medium text-muted-foreground">Amount</th>
-                          <th className="text-center py-1 font-medium text-muted-foreground">Status</th>
-                        </tr></thead>
-                        <tbody>
-                          {quotationPaymentTerms.map((term: any, idx: number) => {
-                            const termAmountUsd = inv.amount_usd * ((term.percentage || 0) / 100);
-                            const paidUsd = idx < arPayments.length ? arPayments[idx]?.amount_usd || 0 : 0;
-                            const termStatus = paidUsd >= termAmountUsd ? 'paid' : paidUsd > 0 ? 'partial' : 'pending';
-                            return (
-                              <tr key={term.id} className="border-b border-border">
-                                <td className="py-1">{idx + 1}</td>
-                                <td className="py-1 text-muted-foreground">{inv.due_date || '—'}</td>
-                                <td className="py-1 text-right font-mono">{formatUSD(termAmountUsd)}</td>
-                                <td className="py-1 text-center"><StatusBadge status={termStatus} /></td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
 
-                  {/* Invoice Actions */}
                   <div className="border-t border-border px-4 py-2 flex flex-wrap gap-2 bg-muted/30">
                     <Button variant="ghost" size="sm" onClick={() => handleDownloadInvoicePdf(inv)}>
                       <Eye className="w-3.5 h-3.5 mr-1" />Preview
