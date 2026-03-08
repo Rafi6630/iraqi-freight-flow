@@ -1,12 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Check, ChevronRight, Lock, Plus, Trash2, FileDown } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, Lock, Plus, Trash2, FileDown, Eye, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { CurrencyDisplay } from '@/components/CurrencyDisplay';
 import { FxLockedBadge } from '@/components/FxLockedBadge';
 import { cn } from '@/lib/utils';
@@ -56,6 +57,7 @@ export default function OrderWizardPage() {
   const { data: customers = [] } = useTableQuery<any>('customers');
   const { data: employees = [] } = useTableQuery<any>('employees');
   const { data: vendors = [] } = useTableQuery<any>('vendors');
+  const { data: partners = [] } = useTableQuery<any>('partners');
   const { data: costs = [] } = useTableQuery<any>('order_costs', { filter: order?.id ? { order_id: order.id } : undefined });
   const { data: quotations = [] } = useTableQuery<any>('quotations', { filter: order?.id ? { order_id: order.id } : undefined });
   const { data: invoices = [] } = useTableQuery<any>('invoices', { filter: order?.id ? { order_id: order.id } : undefined });
@@ -131,8 +133,8 @@ export default function OrderWizardPage() {
       <div className="erp-metric-card min-h-[400px]">
         {currentStep === 1 && <Step1 order={order} customers={customers} employees={employees} onSave={saveOrderField} />}
         {currentStep === 2 && <Step2 order={order} onSave={saveOrderField} />}
-        {currentStep === 3 && <Step3 orderId={order.id} costs={costs} vendors={vendors} insertCost={insertCost} deleteCost={deleteCost} />}
-        {currentStep === 4 && <Step4 order={order} costs={costs} quotations={quotations} insertQuotation={insertQuotation} customerName={customerName} />}
+        {currentStep === 3 && <Step3 orderId={order.id} costs={costs} vendors={vendors} partners={partners} employees={employees} order={order} insertCost={insertCost} deleteCost={deleteCost} />}
+        {currentStep === 4 && <Step4 order={order} costs={costs} quotations={quotations} insertQuotation={insertQuotation} customerName={customerName} partners={partners} employees={employees} />}
         {currentStep === 5 && <Step5 quotations={quotations} />}
         {currentStep === 6 && <Step6 order={order} onSave={saveOrderField} />}
         {currentStep === 7 && <Step7 order={order} quotations={quotations} costs={costs} invoices={invoices} vendorBills={vendorBills} insertInvoice={insertInvoice} insertBill={insertBill} customerName={customerName} vendors={vendors} />}
@@ -233,11 +235,16 @@ function Step2({ order, onSave }: any) {
   );
 }
 
-function Step3({ orderId, costs, vendors, insertCost, deleteCost }: any) {
+function Step3({ orderId, costs, vendors, partners, employees, order, insertCost, deleteCost }: any) {
   const [form, setForm] = useState({ vendor_id: '', category: '', description: '', amount_usd: 0, due_date: '', currency_input: 'USD' });
+  const [commissionForm, setCommissionForm] = useState({
+    partner_id: '', partner_rate: 0, partner_amount_usd: 0,
+    employee_id: order?.responsible_employee_id || '', employee_rate: 0, employee_amount_usd: 0,
+  });
   const fxRate = DEFAULT_FX_RATE;
   const dual = calculateDualAmount(form.amount_usd, form.currency_input as any, fxRate, new Date().toISOString().split('T')[0]);
   const setField = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }));
+  const setCommField = (k: string, v: any) => setCommissionForm(p => ({ ...p, [k]: v }));
 
   const handleAdd = async () => {
     if (!form.vendor_id || form.amount_usd <= 0) return;
@@ -251,12 +258,57 @@ function Step3({ orderId, costs, vendors, insertCost, deleteCost }: any) {
     setForm({ vendor_id: '', category: '', description: '', amount_usd: 0, due_date: '', currency_input: 'USD' });
   };
 
-  const totalUsd = costs.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
-  const totalIqd = costs.reduce((s: number, c: any) => s + (c.amount_iqd || 0), 0);
+  const handleAddCommission = async () => {
+    if (commissionForm.partner_id && commissionForm.partner_amount_usd > 0) {
+      const pDual = calculateDualAmount(commissionForm.partner_amount_usd, 'USD', fxRate, new Date().toISOString().split('T')[0]);
+      await insertCost.mutateAsync({
+        order_id: orderId, vendor_id: null, category: 'partner_commission',
+        description: `Partner/Broker Commission (${commissionForm.partner_rate}%)`,
+        amount_usd: pDual.amount_usd, amount_iqd: pDual.amount_iqd,
+        fx_rate: fxRate, fx_date: new Date().toISOString().split('T')[0],
+        currency_input: 'USD', is_fx_locked: true,
+      });
+    }
+    if (commissionForm.employee_id && commissionForm.employee_amount_usd > 0) {
+      const eDual = calculateDualAmount(commissionForm.employee_amount_usd, 'USD', fxRate, new Date().toISOString().split('T')[0]);
+      await insertCost.mutateAsync({
+        order_id: orderId, vendor_id: null, category: 'employee_incentive',
+        description: `Employee Incentive (${commissionForm.employee_rate}%)`,
+        amount_usd: eDual.amount_usd, amount_iqd: eDual.amount_iqd,
+        fx_rate: fxRate, fx_date: new Date().toISOString().split('T')[0],
+        currency_input: 'USD', is_fx_locked: true,
+      });
+    }
+    toast.success('Commission/Incentive added');
+  };
+
+  // Separate vendor costs from commission/incentive costs
+  const vendorCosts = costs.filter((c: any) => c.category !== 'partner_commission' && c.category !== 'employee_incentive');
+  const commCosts = costs.filter((c: any) => c.category === 'partner_commission' || c.category === 'employee_incentive');
+
+  const totalVendorUsd = vendorCosts.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
+  const totalVendorIqd = vendorCosts.reduce((s: number, c: any) => s + (c.amount_iqd || 0), 0);
+  const totalCommUsd = commCosts.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
+  const totalCommIqd = commCosts.reduce((s: number, c: any) => s + (c.amount_iqd || 0), 0);
+  const totalUsd = totalVendorUsd + totalCommUsd;
+  const totalIqd = totalVendorIqd + totalCommIqd;
+
+  // Auto-calc partner amount when rate changes
+  const handlePartnerRateChange = (rate: number) => {
+    setCommField('partner_rate', rate);
+    setCommField('partner_amount_usd', Math.round(totalVendorUsd * (rate / 100) * 100) / 100);
+  };
+  const handleEmployeeRateChange = (rate: number) => {
+    setCommField('employee_rate', rate);
+    setCommField('employee_amount_usd', Math.round(totalVendorUsd * (rate / 100) * 100) / 100);
+  };
 
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold">Step 3 — Cost Sheet</h3>
+
+      {/* Vendor Costs Table */}
+      <p className="text-sm font-medium text-muted-foreground">Vendor Costs</p>
       <div className="erp-table-container">
         <table className="w-full text-sm">
           <thead><tr className="border-b border-border bg-muted/50">
@@ -268,9 +320,9 @@ function Step3({ orderId, costs, vendors, insertCost, deleteCost }: any) {
             <th className="w-10"></th>
           </tr></thead>
           <tbody>
-            {costs.length === 0 ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-muted-foreground">No costs added yet.</td></tr>
-            ) : costs.map((c: any) => (
+            {vendorCosts.length === 0 ? (
+              <tr><td colSpan={6} className="px-4 py-6 text-center text-muted-foreground">No vendor costs added yet.</td></tr>
+            ) : vendorCosts.map((c: any) => (
               <tr key={c.id} className="border-b border-border">
                 <td className="px-4 py-2">{vendors.find((v: any) => v.id === c.vendor_id)?.company || '—'}</td>
                 <td className="px-4 py-2">{c.category}</td>
@@ -280,16 +332,18 @@ function Step3({ orderId, costs, vendors, insertCost, deleteCost }: any) {
                 <td className="px-4 py-2"><Button variant="ghost" size="sm" onClick={() => deleteCost.mutate(c.id)}><Trash2 className="w-3 h-3 text-destructive" /></Button></td>
               </tr>
             ))}
-            {costs.length > 0 && (
+            {vendorCosts.length > 0 && (
               <tr className="bg-muted/30 font-medium">
-                <td colSpan={3} className="px-4 py-2 text-right">Total:</td>
-                <td className="px-4 py-2 text-right"><CurrencyDisplay usd={totalUsd} iqd={totalIqd} size="sm" /></td>
+                <td colSpan={3} className="px-4 py-2 text-right">Vendor Total:</td>
+                <td className="px-4 py-2 text-right"><CurrencyDisplay usd={totalVendorUsd} iqd={totalVendorIqd} size="sm" /></td>
                 <td colSpan={2}></td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
+
+      {/* Add vendor cost form */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4 bg-muted/30 rounded-lg">
         <Select value={form.vendor_id} onValueChange={v => setField('vendor_id', v)}>
           <SelectTrigger><SelectValue placeholder="Vendor" /></SelectTrigger>
@@ -303,58 +357,376 @@ function Step3({ orderId, costs, vendors, insertCost, deleteCost }: any) {
         <span className="text-sm text-muted-foreground">Preview: {formatUSD(dual.amount_usd)} | {formatIQD(dual.amount_iqd)}</span>
         <Button variant="outline" onClick={handleAdd} disabled={insertCost.isPending}><Plus className="w-4 h-4 mr-1" />Add Cost</Button>
       </div>
+
+      {/* Commission & Incentive Section */}
+      <div className="border-t border-border pt-4 mt-4">
+        <p className="text-sm font-medium text-muted-foreground mb-3">Partner/Broker Commission & Employee Incentive</p>
+
+        {/* Existing commission/incentive entries */}
+        {commCosts.length > 0 && (
+          <div className="erp-table-container mb-4">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-border bg-muted/50">
+                <th className="text-left px-4 py-2 font-medium text-muted-foreground">Type</th>
+                <th className="text-left px-4 py-2 font-medium text-muted-foreground">Description</th>
+                <th className="text-right px-4 py-2 font-medium text-muted-foreground">Amount</th>
+                <th className="w-10"></th>
+              </tr></thead>
+              <tbody>
+                {commCosts.map((c: any) => (
+                  <tr key={c.id} className="border-b border-border">
+                    <td className="px-4 py-2 capitalize">{c.category === 'partner_commission' ? '🤝 Partner Commission' : '💰 Employee Incentive'}</td>
+                    <td className="px-4 py-2 text-muted-foreground">{c.description}</td>
+                    <td className="px-4 py-2 text-right"><CurrencyDisplay usd={c.amount_usd} iqd={c.amount_iqd} size="sm" /></td>
+                    <td className="px-4 py-2"><Button variant="ghost" size="sm" onClick={() => deleteCost.mutate(c.id)}><Trash2 className="w-3 h-3 text-destructive" /></Button></td>
+                  </tr>
+                ))}
+                <tr className="bg-muted/30 font-medium">
+                  <td colSpan={2} className="px-4 py-2 text-right">Commission/Incentive Total:</td>
+                  <td className="px-4 py-2 text-right"><CurrencyDisplay usd={totalCommUsd} iqd={totalCommIqd} size="sm" /></td>
+                  <td></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-muted/30 rounded-lg">
+          {/* Partner Commission */}
+          <div className="space-y-2 p-3 border border-border rounded-lg">
+            <p className="text-xs font-semibold text-muted-foreground uppercase">🤝 Partner/Broker Commission</p>
+            <Select value={commissionForm.partner_id} onValueChange={v => setCommField('partner_id', v)}>
+              <SelectTrigger><SelectValue placeholder="Select Partner" /></SelectTrigger>
+              <SelectContent>{partners.map((p: any) => <SelectItem key={p.id} value={p.id}>{p.company}</SelectItem>)}</SelectContent>
+            </Select>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label className="text-xs">Rate %</Label>
+                <Input type="number" value={commissionForm.partner_rate || ''} onChange={e => handlePartnerRateChange(parseFloat(e.target.value) || 0)} />
+              </div>
+              <div><Label className="text-xs">Amount USD</Label>
+                <Input type="number" value={commissionForm.partner_amount_usd || ''} onChange={e => setCommField('partner_amount_usd', parseFloat(e.target.value) || 0)} />
+              </div>
+            </div>
+          </div>
+
+          {/* Employee Incentive */}
+          <div className="space-y-2 p-3 border border-border rounded-lg">
+            <p className="text-xs font-semibold text-muted-foreground uppercase">💰 Employee Incentive</p>
+            <Select value={commissionForm.employee_id} onValueChange={v => setCommField('employee_id', v)}>
+              <SelectTrigger><SelectValue placeholder="Select Employee" /></SelectTrigger>
+              <SelectContent>{employees.map((e: any) => <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>)}</SelectContent>
+            </Select>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label className="text-xs">Rate %</Label>
+                <Input type="number" value={commissionForm.employee_rate || ''} onChange={e => handleEmployeeRateChange(parseFloat(e.target.value) || 0)} />
+              </div>
+              <div><Label className="text-xs">Amount USD</Label>
+                <Input type="number" value={commissionForm.employee_amount_usd || ''} onChange={e => setCommField('employee_amount_usd', parseFloat(e.target.value) || 0)} />
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="mt-3">
+          <Button variant="outline" onClick={handleAddCommission} disabled={insertCost.isPending}>
+            <Plus className="w-4 h-4 mr-1" />Add Commission / Incentive
+          </Button>
+        </div>
+      </div>
+
+      {/* Grand Total */}
+      {costs.length > 0 && (
+        <div className="p-4 bg-primary/5 rounded-lg border border-primary/20">
+          <div className="grid grid-cols-3 gap-4">
+            <div><p className="text-xs text-muted-foreground">Vendor Costs</p><CurrencyDisplay usd={totalVendorUsd} iqd={totalVendorIqd} size="md" layout="stacked" /></div>
+            <div><p className="text-xs text-muted-foreground">Commission + Incentive</p><CurrencyDisplay usd={totalCommUsd} iqd={totalCommIqd} size="md" layout="stacked" /></div>
+            <div><p className="text-xs font-semibold">Grand Total</p><CurrencyDisplay usd={totalUsd} iqd={totalIqd} size="md" layout="stacked" /></div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function Step4({ order, costs, quotations, insertQuotation, customerName }: any) {
-  const [marginPct, setMarginPct] = useState(25);
+function Step4({ order, costs, quotations, insertQuotation, customerName, partners, employees }: any) {
+  const [sellingPriceUsd, setSellingPriceUsd] = useState(0);
   const [validity, setValidity] = useState(30);
-  const totalCostUsd = costs.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
-  const serviceFeeUsd = totalCostUsd * (marginPct / 100);
-  const totalUsd = totalCostUsd + serviceFeeUsd;
+  const [paymentTerms, setPaymentTerms] = useState([
+    { description: '50% upon booking', percentage: 50 },
+    { description: '50% upon delivery', percentage: 50 },
+  ]);
+  const [newTerm, setNewTerm] = useState({ description: '', percentage: 0 });
+  const [previewOpen, setPreviewOpen] = useState(false);
+
   const fxRate = DEFAULT_FX_RATE;
+
+  // Separate cost categories
+  const vendorCosts = costs.filter((c: any) => c.category !== 'partner_commission' && c.category !== 'employee_incentive');
+  const commCosts = costs.filter((c: any) => c.category === 'partner_commission' || c.category === 'employee_incentive');
+
+  const totalVendorCostUsd = vendorCosts.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
+  const totalCommUsd = commCosts.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
+  const totalCostWithCommUsd = totalVendorCostUsd + totalCommUsd;
+
+  // Margin is calculated from price and vendor cost (without commission/incentive)
+  const marginUsd = sellingPriceUsd - totalVendorCostUsd;
+  const marginPct = totalVendorCostUsd > 0 ? Math.round((marginUsd / totalVendorCostUsd) * 10000) / 100 : 0;
+
+  // Net profit = selling price - total cost (including commission/incentive)
+  const netProfitUsd = sellingPriceUsd - totalCostWithCommUsd;
+
+  // Auto-set selling price on first render
+  useEffect(() => {
+    if (sellingPriceUsd === 0 && totalVendorCostUsd > 0) {
+      setSellingPriceUsd(Math.round(totalVendorCostUsd * 1.25 * 100) / 100);
+    }
+  }, [totalVendorCostUsd]);
+
+  const addPaymentTerm = () => {
+    if (!newTerm.description || newTerm.percentage <= 0) return;
+    setPaymentTerms(prev => [...prev, { ...newTerm }]);
+    setNewTerm({ description: '', percentage: 0 });
+  };
+
+  const removePaymentTerm = (idx: number) => {
+    setPaymentTerms(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const totalTermsPct = paymentTerms.reduce((s, t) => s + t.percentage, 0);
 
   const handleGenerate = async () => {
     if (costs.length === 0) { toast.error('Add costs first'); return; }
+    if (sellingPriceUsd <= 0) { toast.error('Enter selling price'); return; }
+    if (totalTermsPct !== 100) { toast.error('Payment terms must total 100%'); return; }
+
     const year = new Date().getFullYear();
     const quoteNo = `QUO-${year}-${String(quotations.length + 1).padStart(4, '0')}`;
+    const serviceFeeUsd = marginUsd;
+
     await insertQuotation.mutateAsync({
       quote_no: quoteNo, order_id: order.id, status: 'draft',
       margin_pct: marginPct, service_fee_usd: serviceFeeUsd, service_fee_iqd: serviceFeeUsd * fxRate,
-      total_usd: totalUsd, total_iqd: totalUsd * fxRate,
+      total_usd: sellingPriceUsd, total_iqd: sellingPriceUsd * fxRate,
       fx_rate: fxRate, fx_date: new Date().toISOString().split('T')[0],
       is_fx_locked: true, validity_days: validity,
     });
-    // Generate PDF
+
     generateQuotationPDF({
-      quoteNo, customerName, order, costs, marginPct,
-      serviceFeeUsd, totalUsd, fxRate,
+      quoteNo, customerName, order, costs: vendorCosts, marginPct,
+      serviceFeeUsd, totalUsd: sellingPriceUsd, fxRate,
       fxDate: new Date().toISOString().split('T')[0], validity,
     });
-    toast.success('Quotation created & PDF generated');
+    toast.success('Quotation created & PDF downloaded');
+  };
+
+  const handlePreviewDownload = () => {
+    if (quotations.length === 0) { toast.error('Generate quotation first'); return; }
+    const q = quotations[0];
+    generateQuotationPDF({
+      quoteNo: q.quote_no, customerName, order, costs: vendorCosts, marginPct: q.margin_pct || marginPct,
+      serviceFeeUsd: q.service_fee_usd || marginUsd, totalUsd: q.total_usd || sellingPriceUsd, fxRate: q.fx_rate || fxRate,
+      fxDate: q.fx_date || new Date().toISOString().split('T')[0], validity: q.validity_days || validity,
+    });
+  };
+
+  const handleSendToCustomer = () => {
+    if (quotations.length === 0) { toast.error('Generate quotation first'); return; }
+    toast.success('Quotation sent to customer (email integration pending)');
   };
 
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold">Step 4 — Quotation Generation</h3>
-      <div className="grid grid-cols-2 gap-4">
-        <div><Label>Margin %</Label><Input type="number" value={marginPct} onChange={e => setMarginPct(parseFloat(e.target.value) || 0)} /></div>
-        <div><Label>Validity (days)</Label><Input type="number" value={validity} onChange={e => setValidity(parseInt(e.target.value) || 30)} /></div>
+
+      {/* 1: Total cost with and without commission */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-muted/30 rounded-lg">
+        <div>
+          <p className="text-xs text-muted-foreground">Vendor Costs</p>
+          <p className="text-lg font-semibold">{formatUSD(totalVendorCostUsd)}</p>
+          <p className="text-xs text-muted-foreground">{formatIQD(totalVendorCostUsd * fxRate)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Commission + Incentive</p>
+          <p className="text-lg font-semibold">{formatUSD(totalCommUsd)}</p>
+          <p className="text-xs text-muted-foreground">{formatIQD(totalCommUsd * fxRate)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Total Cost (with Comm.)</p>
+          <p className="text-lg font-semibold">{formatUSD(totalCostWithCommUsd)}</p>
+          <p className="text-xs text-muted-foreground">{formatIQD(totalCostWithCommUsd * fxRate)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground">Total Cost (without Comm.)</p>
+          <p className="text-lg font-semibold">{formatUSD(totalVendorCostUsd)}</p>
+          <p className="text-xs text-muted-foreground">{formatIQD(totalVendorCostUsd * fxRate)}</p>
+        </div>
       </div>
-      <div className="grid grid-cols-3 gap-4 p-4 bg-muted/30 rounded-lg">
-        <div><p className="text-xs text-muted-foreground">Total Costs</p><CurrencyDisplay usd={totalCostUsd} iqd={totalCostUsd * fxRate} size="md" layout="stacked" /></div>
-        <div><p className="text-xs text-muted-foreground">Service Fee</p><CurrencyDisplay usd={serviceFeeUsd} iqd={serviceFeeUsd * fxRate} size="md" layout="stacked" /></div>
-        <div><p className="text-xs text-muted-foreground">Total Quote</p><CurrencyDisplay usd={totalUsd} iqd={totalUsd * fxRate} size="md" layout="stacked" /></div>
+
+      {/* 2: Price and auto-calculated margin */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        <div>
+          <Label>Selling Price (USD) *</Label>
+          <Input type="number" value={sellingPriceUsd || ''} onChange={e => setSellingPriceUsd(parseFloat(e.target.value) || 0)} />
+          <p className="text-xs text-muted-foreground mt-1">{formatIQD(sellingPriceUsd * fxRate)}</p>
+        </div>
+        <div>
+          <Label>Margin (auto-calculated)</Label>
+          <div className="h-10 flex items-center px-3 bg-muted rounded-md border border-input">
+            <span className={cn('font-semibold', marginPct >= 0 ? 'text-[hsl(var(--success))]' : 'text-destructive')}>
+              {marginPct}% ({formatUSD(marginUsd)})
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">Price − Vendor Cost (without comm.)</p>
+        </div>
+        <div>
+          <Label>Validity (days)</Label>
+          <Input type="number" value={validity} onChange={e => setValidity(parseInt(e.target.value) || 30)} />
+        </div>
       </div>
+
+      {/* 3: Calculation Breakdown */}
+      <div className="p-4 bg-muted/30 rounded-lg border border-border">
+        <p className="text-sm font-semibold mb-3">📊 Calculation Breakdown</p>
+        <table className="w-full text-sm">
+          <tbody>
+            <tr className="border-b border-border">
+              <td className="py-2 text-muted-foreground">Vendor Costs (A)</td>
+              <td className="py-2 text-right font-mono">{formatUSD(totalVendorCostUsd)}</td>
+              <td className="py-2 text-right font-mono text-muted-foreground">{formatIQD(totalVendorCostUsd * fxRate)}</td>
+            </tr>
+            <tr className="border-b border-border">
+              <td className="py-2 text-muted-foreground">Partner/Broker Commission (B)</td>
+              <td className="py-2 text-right font-mono">{formatUSD(commCosts.filter((c: any) => c.category === 'partner_commission').reduce((s: number, c: any) => s + c.amount_usd, 0))}</td>
+              <td className="py-2 text-right font-mono text-muted-foreground">{formatIQD(commCosts.filter((c: any) => c.category === 'partner_commission').reduce((s: number, c: any) => s + c.amount_iqd, 0))}</td>
+            </tr>
+            <tr className="border-b border-border">
+              <td className="py-2 text-muted-foreground">Employee Incentive (C)</td>
+              <td className="py-2 text-right font-mono">{formatUSD(commCosts.filter((c: any) => c.category === 'employee_incentive').reduce((s: number, c: any) => s + c.amount_usd, 0))}</td>
+              <td className="py-2 text-right font-mono text-muted-foreground">{formatIQD(commCosts.filter((c: any) => c.category === 'employee_incentive').reduce((s: number, c: any) => s + c.amount_iqd, 0))}</td>
+            </tr>
+            <tr className="border-b border-border bg-muted/50">
+              <td className="py-2 font-medium">Total Cost (A+B+C)</td>
+              <td className="py-2 text-right font-mono font-medium">{formatUSD(totalCostWithCommUsd)}</td>
+              <td className="py-2 text-right font-mono text-muted-foreground">{formatIQD(totalCostWithCommUsd * fxRate)}</td>
+            </tr>
+            <tr className="border-b border-border">
+              <td className="py-2 text-muted-foreground">Selling Price (D)</td>
+              <td className="py-2 text-right font-mono">{formatUSD(sellingPriceUsd)}</td>
+              <td className="py-2 text-right font-mono text-muted-foreground">{formatIQD(sellingPriceUsd * fxRate)}</td>
+            </tr>
+            <tr className="border-b border-border">
+              <td className="py-2 text-muted-foreground">Margin (D−A) = {marginPct}%</td>
+              <td className="py-2 text-right font-mono">{formatUSD(marginUsd)}</td>
+              <td className="py-2 text-right font-mono text-muted-foreground">{formatIQD(marginUsd * fxRate)}</td>
+            </tr>
+            <tr className={cn(netProfitUsd >= 0 ? 'bg-accent' : 'bg-destructive/10')}>
+              <td className="py-2 font-semibold">Net Profit (D−A−B−C)</td>
+              <td className={cn('py-2 text-right font-mono font-semibold', netProfitUsd >= 0 ? 'text-[hsl(var(--success))]' : 'text-destructive')}>{formatUSD(netProfitUsd)}</td>
+              <td className="py-2 text-right font-mono text-muted-foreground">{formatIQD(netProfitUsd * fxRate)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* 4: Payment Terms */}
+      <div className="p-4 bg-muted/30 rounded-lg border border-border">
+        <p className="text-sm font-semibold mb-3">💳 Payment Terms</p>
+        {paymentTerms.map((t, i) => (
+          <div key={i} className="flex items-center gap-3 mb-2">
+            <span className="text-sm flex-1">{t.description}</span>
+            <span className="text-sm font-mono w-16 text-right">{t.percentage}%</span>
+            <span className="text-sm font-mono w-28 text-right">{formatUSD(sellingPriceUsd * (t.percentage / 100))}</span>
+            <Button variant="ghost" size="sm" onClick={() => removePaymentTerm(i)}><Trash2 className="w-3 h-3 text-destructive" /></Button>
+          </div>
+        ))}
+        <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border">
+          <Input placeholder="Term description" value={newTerm.description} onChange={e => setNewTerm(p => ({ ...p, description: e.target.value }))} className="flex-1" />
+          <Input type="number" placeholder="%" value={newTerm.percentage || ''} onChange={e => setNewTerm(p => ({ ...p, percentage: parseFloat(e.target.value) || 0 }))} className="w-20" />
+          <Button variant="outline" size="sm" onClick={addPaymentTerm}><Plus className="w-3 h-3" /></Button>
+        </div>
+        <p className={cn('text-xs mt-2', totalTermsPct === 100 ? 'text-[hsl(var(--success))]' : 'text-destructive')}>
+          Total: {totalTermsPct}% {totalTermsPct !== 100 && '(must be 100%)'}
+        </p>
+      </div>
+
+      {/* Existing quotation status */}
       {quotations.length > 0 && (
         <div className="p-3 rounded-lg bg-accent text-sm">
           ✅ Quotation {quotations[0].quote_no} generated ({quotations[0].status})
         </div>
       )}
-      <Button onClick={handleGenerate} disabled={insertQuotation.isPending}>
-        <FileDown className="w-4 h-4 mr-2" />{quotations.length > 0 ? 'Regenerate' : 'Generate'} Quotation PDF
-      </Button>
+
+      {/* 5: Generate, Preview, Download, Send buttons */}
+      <div className="flex flex-wrap gap-3">
+        <Button onClick={handleGenerate} disabled={insertQuotation.isPending}>
+          <FileDown className="w-4 h-4 mr-2" />{quotations.length > 0 ? 'Regenerate' : 'Generate'} Quotation
+        </Button>
+        {quotations.length > 0 && (
+          <>
+            <Button variant="outline" onClick={() => setPreviewOpen(true)}>
+              <Eye className="w-4 h-4 mr-2" />Preview
+            </Button>
+            <Button variant="outline" onClick={handlePreviewDownload}>
+              <FileDown className="w-4 h-4 mr-2" />Download PDF
+            </Button>
+            <Button variant="secondary" onClick={handleSendToCustomer}>
+              <Send className="w-4 h-4 mr-2" />Send to Customer
+            </Button>
+          </>
+        )}
+      </div>
+
+      {/* Preview Dialog */}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Quotation Preview — {quotations[0]?.quote_no || 'Draft'}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 text-sm">
+            <div className="grid grid-cols-2 gap-4 p-4 bg-muted/30 rounded-lg">
+              <div><p className="text-xs text-muted-foreground">Customer</p><p className="font-medium">{customerName}</p></div>
+              <div><p className="text-xs text-muted-foreground">Order</p><p className="font-medium">{order.order_no}</p></div>
+              <div><p className="text-xs text-muted-foreground">Route</p><p>{order.origin_country} → {order.destination_country}</p></div>
+              <div><p className="text-xs text-muted-foreground">Mode</p><p className="uppercase">{order.mode}</p></div>
+            </div>
+
+            <table className="w-full text-sm border border-border">
+              <thead><tr className="bg-primary text-primary-foreground">
+                <th className="px-3 py-2 text-left">Service</th>
+                <th className="px-3 py-2 text-right">USD</th>
+                <th className="px-3 py-2 text-right">IQD</th>
+              </tr></thead>
+              <tbody>
+                {vendorCosts.map((c: any, i: number) => (
+                  <tr key={i} className="border-b border-border">
+                    <td className="px-3 py-2">{c.description || c.category || 'Service'}</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatUSD(c.amount_usd * (1 + marginPct / 100))}</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatIQD(c.amount_usd * (1 + marginPct / 100) * fxRate)}</td>
+                  </tr>
+                ))}
+                <tr className="font-semibold bg-muted/50">
+                  <td className="px-3 py-2">TOTAL</td>
+                  <td className="px-3 py-2 text-right font-mono">{formatUSD(sellingPriceUsd)}</td>
+                  <td className="px-3 py-2 text-right font-mono">{formatIQD(sellingPriceUsd * fxRate)}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div className="p-3 bg-muted/30 rounded-lg">
+              <p className="text-xs font-semibold mb-2">Payment Terms</p>
+              {paymentTerms.map((t, i) => (
+                <p key={i} className="text-xs">{t.description}: {t.percentage}% — {formatUSD(sellingPriceUsd * (t.percentage / 100))}</p>
+              ))}
+            </div>
+
+            <p className="text-xs text-muted-foreground">Validity: {validity} days from date of issue. FX Rate: {fxRate} USD/IQD.</p>
+          </div>
+
+          <div className="flex gap-3 mt-4">
+            <Button onClick={handlePreviewDownload}><FileDown className="w-4 h-4 mr-2" />Download PDF</Button>
+            <Button variant="secondary" onClick={handleSendToCustomer}><Send className="w-4 h-4 mr-2" />Send to Customer</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
