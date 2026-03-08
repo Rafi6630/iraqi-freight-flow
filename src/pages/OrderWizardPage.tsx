@@ -1005,6 +1005,44 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, custom
 }
 
 function Step5({ quotations }: any) {
+  const queryClient = useQueryClient();
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useState<HTMLInputElement | null>(null);
+
+  const latestQuotation = quotations[0];
+
+  const handleUploadSignedPdf = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !latestQuotation) return;
+    if (file.type !== 'application/pdf') { toast.error('Please upload a PDF file'); return; }
+
+    setUploading(true);
+    try {
+      const filePath = `${latestQuotation.id}/${Date.now()}-signed.pdf`;
+      const { error: uploadError } = await supabase.storage
+        .from('signed-quotations')
+        .upload(filePath, file, { upsert: true });
+      if (uploadError) throw uploadError;
+
+      const { data: publicUrlData } = supabase.storage
+        .from('signed-quotations')
+        .getPublicUrl(filePath);
+
+      await (supabase.from('quotations') as any).update({
+        signed_pdf_url: publicUrlData.publicUrl,
+        status: 'approved',
+        approved_at: new Date().toISOString(),
+      }).eq('id', latestQuotation.id);
+
+      queryClient.invalidateQueries({ queryKey: ['quotations'] });
+      toast.success('Signed PDF uploaded & quotation approved');
+    } catch (err: any) {
+      toast.error(`Upload failed: ${err.message}`);
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold">Step 5 — Quotation Approval</h3>
@@ -1012,11 +1050,52 @@ function Step5({ quotations }: any) {
         <p className="text-muted-foreground">Generate a quotation in Step 4 first.</p>
       ) : (
         <>
-          <p className="text-sm text-muted-foreground">Upload signed quotation from customer to proceed.</p>
-          <div className="border-2 border-dashed border-border rounded-lg p-12 text-center">
-            <p className="text-muted-foreground">Drag & drop signed PDF here</p>
-            <Button variant="outline" className="mt-4">Upload Signed PDF</Button>
+          <div className="p-4 bg-muted/30 rounded-lg border border-border">
+            <p className="text-sm font-semibold mb-1">Quotation: {latestQuotation.quote_no}</p>
+            <p className="text-sm text-muted-foreground capitalize">Status: {latestQuotation.status}</p>
+            {latestQuotation.approved_at && <p className="text-xs text-muted-foreground mt-1">Approved: {new Date(latestQuotation.approved_at).toLocaleDateString()}</p>}
           </div>
+
+          {latestQuotation.signed_pdf_url ? (
+            <div className="p-4 bg-accent rounded-lg space-y-2">
+              <p className="text-sm font-medium">✅ Signed PDF uploaded</p>
+              <a href={latestQuotation.signed_pdf_url} target="_blank" rel="noopener noreferrer" className="text-sm text-primary underline">View Signed PDF</a>
+            </div>
+          ) : (
+            <div className="border-2 border-dashed border-border rounded-lg p-12 text-center">
+              <p className="text-muted-foreground mb-4">Upload signed quotation from customer to approve</p>
+              <input
+                type="file"
+                accept=".pdf"
+                onChange={handleUploadSignedPdf}
+                className="hidden"
+                id="signed-pdf-upload"
+              />
+              <label htmlFor="signed-pdf-upload">
+                <Button variant="outline" className="cursor-pointer" disabled={uploading} asChild>
+                  <span>{uploading ? 'Uploading...' : 'Upload Signed PDF'}</span>
+                </Button>
+              </label>
+            </div>
+          )}
+
+          {/* Re-upload option even if already uploaded */}
+          {latestQuotation.signed_pdf_url && (
+            <div>
+              <input
+                type="file"
+                accept=".pdf"
+                onChange={handleUploadSignedPdf}
+                className="hidden"
+                id="signed-pdf-reupload"
+              />
+              <label htmlFor="signed-pdf-reupload">
+                <Button variant="outline" size="sm" className="cursor-pointer" disabled={uploading} asChild>
+                  <span>{uploading ? 'Uploading...' : 'Re-upload Signed PDF'}</span>
+                </Button>
+              </label>
+            </div>
+          )}
         </>
       )}
     </div>

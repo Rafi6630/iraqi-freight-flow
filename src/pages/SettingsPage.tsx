@@ -75,11 +75,7 @@ export default function SettingsPage() {
           <p className="text-sm text-muted-foreground">Invite users, assign roles, manage access.</p>
           <Button>Invite User</Button>
         </TabsContent>
-        <TabsContent value="templates" className="erp-metric-card space-y-4">
-          <h3 className="text-lg font-semibold">Document Templates</h3>
-          <p className="text-sm text-muted-foreground">Manage quotation and invoice templates.</p>
-          <Button>Create Template</Button>
-        </TabsContent>
+        <TabsContent value="templates"><QuotationTemplatesTab /></TabsContent>
         <TabsContent value="notifications" className="erp-metric-card space-y-4">
           <h3 className="text-lg font-semibold">Notification Preferences</h3>
           <div className="space-y-3">
