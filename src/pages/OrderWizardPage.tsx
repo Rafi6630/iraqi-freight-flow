@@ -187,7 +187,17 @@ export default function OrderWizardPage() {
       </div>
 
       {/* Step Content */}
-      <div className="erp-metric-card min-h-[400px]">
+      <div className="erp-metric-card min-h-[400px] relative">
+        {/* Locked overlay for Steps 1-8 when order is closed */}
+        {order.closed_at && currentStep < 9 && (
+          <div className="absolute inset-0 z-10 bg-background/80 backdrop-blur-sm rounded-lg flex items-center justify-center">
+            <div className="flex flex-col items-center gap-2 text-center p-6">
+              <Lock className="w-8 h-8 text-amber-500" />
+              <p className="font-semibold text-foreground">Order Locked</p>
+              <p className="text-sm text-muted-foreground max-w-sm">This order was closed on {order.closed_at?.split('T')[0]}. No further modifications are allowed.</p>
+            </div>
+          </div>
+        )}
         {currentStep === 1 && <Step1 order={order} customers={customers} employees={employees} onSave={saveOrderField} />}
         {currentStep === 2 && <Step2 order={order} onSave={saveOrderField} />}
         {currentStep === 3 && <Step3 orderId={order.id} costs={costs} vendors={vendors} partners={partners} employees={employees} order={order} insertCost={insertCost} deleteCost={deleteCost} />}
