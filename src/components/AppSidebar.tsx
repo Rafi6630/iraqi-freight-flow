@@ -17,6 +17,7 @@ const navGroups = [
     label: 'Overview',
     items: [
       { title: 'Dashboard', url: '/', icon: LayoutDashboard },
+      { title: 'Orders', url: '/orders', icon: Package },
     ],
   },
   {
@@ -32,7 +33,6 @@ const navGroups = [
   {
     label: 'Operations',
     items: [
-      { title: 'Orders', url: '/orders', icon: Package },
       { title: 'Quotations', url: '/quotations', icon: ClipboardList },
     ],
   },
