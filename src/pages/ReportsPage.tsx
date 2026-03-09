@@ -334,48 +334,143 @@ export default function ReportsPage() {
                 )}
 
                 {/* Monthly P&L */}
-                {selectedReport === 'monthly-pl' && (
-                  <div className="space-y-2">
-                    {[
-                      { label: '💰 Revenue (Invoices)', val: profitData.totalRevenue, indent: false, bold: false, positive: true },
-                      { label: '  (−) Vendor Costs (COGS)', val: -profitData.totalCogs, indent: true, bold: false, positive: false },
-                      { label: '= Gross Profit', val: profitData.grossProfit, indent: false, bold: true, positive: profitData.grossProfit >= 0 },
-                      { label: '  (−) Partner Commissions', val: -profitData.totalCommissions, indent: true, bold: false, positive: false },
-                      { label: '  (−) Expenses', val: -profitData.totalExpenses, indent: true, bold: false, positive: false },
-                      { label: '  (−) Payment / Bank Fees', val: -profitData.totalPaymentFees, indent: true, bold: false, positive: false },
-                      { label: '  (+/−) FX Gain / Loss', val: fxData.net, indent: true, bold: false, positive: fxData.net >= 0 },
-                      { label: '= Net Profit', val: profitData.netProfit, indent: false, bold: true, positive: profitData.netProfit >= 0 },
-                    ].map(row => (
-                      <div key={row.label} className={`flex justify-between items-center p-3 rounded-lg ${row.bold ? 'bg-primary/10 ring-1 ring-primary/20' : 'bg-muted/30'} ${row.indent ? 'ml-4' : ''}`}>
-                        <span className={`text-sm ${row.bold ? 'font-bold' : ''} ${row.indent ? 'text-muted-foreground' : ''}`}>{row.label}</span>
-                        <div className="text-right">
-                          <p className={`font-mono text-sm ${row.bold ? 'font-bold text-base' : ''} ${row.positive ? 'text-emerald-600' : 'text-red-500'}`}>
-                            {row.val >= 0 ? '+' : ''}${row.val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </p>
-                          <p className="text-xs text-muted-foreground">{(row.val * DEFAULT_FX_RATE).toLocaleString()} IQD</p>
+                {selectedReport === 'monthly-pl' && (() => {
+                  // Build month-by-month rows for the selected year range
+                  const monthRows: any[] = [];
+                  const startYear  = parseInt(dateFrom.slice(0, 4));
+                  const startMonth = parseInt(dateFrom.slice(5, 7));
+                  const endYear    = parseInt(dateTo.slice(0, 4));
+                  const endMonth   = parseInt(dateTo.slice(5, 7));
+
+                  for (let y = startYear; y <= endYear; y++) {
+                    const mStart = y === startYear ? startMonth : 1;
+                    const mEnd   = y === endYear   ? endMonth   : 12;
+                    for (let m = mStart; m <= mEnd; m++) {
+                      const key = `${y}-${String(m).padStart(2, '0')}`;
+                      const label = new Date(y, m - 1).toLocaleString('en', { month: 'short', year: '2-digit' });
+
+                      const revenue     = invoices.filter((i: any) => (i.issued_date || '').startsWith(key))
+                                            .reduce((s: number, i: any) => s + (i.amount_usd || 0), 0);
+                      const cogs        = (vendorBills.filter((b: any) => (b.issued_date || '').startsWith(key))
+                                            .reduce((s: number, b: any) => s + (b.amount_usd || 0), 0))
+                                          || orderCosts.filter((c: any) =>
+                                              (c.created_at || '').startsWith(key) &&
+                                              c.category !== 'partner_commission' && c.category !== 'employee_incentive')
+                                            .reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
+                      const commissions = orderCosts.filter((c: any) =>
+                                            (c.created_at || '').startsWith(key) &&
+                                            (c.category === 'partner_commission' || c.category === 'employee_incentive'))
+                                            .reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
+                      // Expenses = entries from the expenses table (not order costs)
+                      const expensesAmt = expenses.filter((e: any) => (e.date || '').startsWith(key))
+                                            .reduce((s: number, e: any) => s + (e.amount_usd || 0), 0);
+                      const payFees     = payments.filter((p: any) => (p.date || '').startsWith(key))
+                                            .reduce((s: number, p: any) => s + (p.payment_fee_usd || 0), 0);
+                      const fxGL        = payments.filter((p: any) => (p.date || '').startsWith(key))
+                                            .reduce((s: number, p: any) => s + (p.fx_gain_loss_usd || 0), 0);
+                      const grossProfit = revenue - cogs;
+                      const netProfit   = grossProfit - commissions - expensesAmt - payFees + fxGL;
+
+                      // Only include months that have any activity
+                      if (revenue || cogs || commissions || expensesAmt || payFees) {
+                        monthRows.push({ key, label, revenue, cogs, grossProfit, commissions, expensesAmt, payFees, fxGL, netProfit });
+                      }
+                    }
+                  }
+
+                  // Period totals
+                  const tot = monthRows.reduce((acc, r) => ({
+                    revenue: acc.revenue + r.revenue, cogs: acc.cogs + r.cogs,
+                    grossProfit: acc.grossProfit + r.grossProfit, commissions: acc.commissions + r.commissions,
+                    expensesAmt: acc.expensesAmt + r.expensesAmt, payFees: acc.payFees + r.payFees,
+                    fxGL: acc.fxGL + r.fxGL, netProfit: acc.netProfit + r.netProfit,
+                  }), { revenue: 0, cogs: 0, grossProfit: 0, commissions: 0, expensesAmt: 0, payFees: 0, fxGL: 0, netProfit: 0 });
+
+                  const fmtC = (n: number) => n === 0 ? '—'
+                    : `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+
+                  // Expense detail for the selected period (from expenses table)
+                  const expByCategory = filteredExpenses.reduce((acc: Record<string, number>, e: any) => {
+                    const cat = e.category || 'Uncategorized';
+                    acc[cat] = (acc[cat] || 0) + (e.amount_usd || 0);
+                    return acc;
+                  }, {} as Record<string, number>);
+
+                  return (
+                    <div className="space-y-4">
+                      {monthRows.length === 0 ? (
+                        <p className="text-muted-foreground text-sm text-center py-8">No data for the selected period.</p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="border-b border-border bg-muted/50">
+                                <th className="text-left px-2 py-2 font-medium text-muted-foreground">Month</th>
+                                <th className="text-right px-2 py-2 font-medium text-muted-foreground">💰 Revenue</th>
+                                <th className="text-right px-2 py-2 font-medium text-muted-foreground">📦 COGS</th>
+                                <th className="text-right px-2 py-2 font-medium text-muted-foreground">📊 Gross Profit</th>
+                                <th className="text-right px-2 py-2 font-medium text-muted-foreground">🤝 Commissions</th>
+                                <th className="text-right px-2 py-2 font-medium text-muted-foreground">🧾 Expenses</th>
+                                <th className="text-right px-2 py-2 font-medium text-muted-foreground">🏦 Pay Fees</th>
+                                <th className="text-right px-2 py-2 font-medium text-muted-foreground">💱 FX</th>
+                                <th className="text-right px-2 py-2 font-medium text-muted-foreground">🏆 Net Profit</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {monthRows.map(r => (
+                                <tr key={r.key} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
+                                  <td className="px-2 py-2 font-semibold">{r.label}</td>
+                                  <td className="px-2 py-2 text-right text-emerald-600 font-mono">{fmtC(r.revenue)}</td>
+                                  <td className="px-2 py-2 text-right text-red-500 font-mono">{r.cogs > 0 ? `-${fmtC(r.cogs).slice(1)}` : '—'}</td>
+                                  <td className={`px-2 py-2 text-right font-mono font-semibold ${r.grossProfit >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{fmtC(r.grossProfit)}</td>
+                                  <td className="px-2 py-2 text-right text-amber-600 font-mono">{r.commissions > 0 ? `-${fmtC(r.commissions).slice(1)}` : '—'}</td>
+                                  <td className="px-2 py-2 text-right text-orange-600 font-mono">{r.expensesAmt > 0 ? `-${fmtC(r.expensesAmt).slice(1)}` : '—'}</td>
+                                  <td className="px-2 py-2 text-right text-slate-500 font-mono">{r.payFees > 0 ? `-${fmtC(r.payFees).slice(1)}` : '—'}</td>
+                                  <td className={`px-2 py-2 text-right font-mono ${r.fxGL >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{r.fxGL !== 0 ? `${r.fxGL > 0 ? '+' : ''}${fmtC(r.fxGL)}` : '—'}</td>
+                                  <td className={`px-2 py-2 text-right font-mono font-bold ${r.netProfit >= 0 ? 'text-primary' : 'text-destructive'}`}>{fmtC(r.netProfit)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            <tfoot>
+                              <tr className="border-t-2 border-border bg-muted/50 font-bold">
+                                <td className="px-2 py-2 text-sm">TOTAL</td>
+                                <td className="px-2 py-2 text-right text-emerald-600 font-mono">{fmtC(tot.revenue)}</td>
+                                <td className="px-2 py-2 text-right text-red-500 font-mono">{tot.cogs > 0 ? `-${fmtC(tot.cogs).slice(1)}` : '—'}</td>
+                                <td className={`px-2 py-2 text-right font-mono ${tot.grossProfit >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{fmtC(tot.grossProfit)}</td>
+                                <td className="px-2 py-2 text-right text-amber-600 font-mono">{tot.commissions > 0 ? `-${fmtC(tot.commissions).slice(1)}` : '—'}</td>
+                                <td className="px-2 py-2 text-right text-orange-600 font-mono">{tot.expensesAmt > 0 ? `-${fmtC(tot.expensesAmt).slice(1)}` : '—'}</td>
+                                <td className="px-2 py-2 text-right text-slate-500 font-mono">{tot.payFees > 0 ? `-${fmtC(tot.payFees).slice(1)}` : '—'}</td>
+                                <td className={`px-2 py-2 text-right font-mono ${tot.fxGL >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{tot.fxGL !== 0 ? `${tot.fxGL > 0 ? '+' : ''}${fmtC(tot.fxGL)}` : '—'}</td>
+                                <td className={`px-2 py-2 text-right font-mono ${tot.netProfit >= 0 ? 'text-primary' : 'text-destructive'}`}>{fmtC(tot.netProfit)}</td>
+                              </tr>
+                            </tfoot>
+                          </table>
                         </div>
-                      </div>
-                    ))}
-                    {/* Expense breakdown */}
-                    {Object.keys(profitData.expenseByCategory).length > 0 && (
-                      <div className="mt-4 p-3 bg-muted/20 rounded-lg border border-border">
-                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">🧾 Expenses Breakdown by Category</p>
-                        <div className="grid grid-cols-2 gap-2">
-                          {Object.entries(profitData.expenseByCategory).map(([cat, amt]: any) => (
-                            <div key={cat} className="flex justify-between items-center text-sm">
-                              <span className="text-muted-foreground">{cat}</span>
-                              <span className="font-mono text-orange-600">${amt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                            </div>
-                          ))}
+                      )}
+
+                      {/* Expense detail breakdown */}
+                      {Object.keys(expByCategory).length > 0 && (
+                        <div className="p-3 bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800 rounded-lg">
+                          <p className="text-xs font-semibold text-orange-700 dark:text-orange-400 mb-2 uppercase tracking-wide">🧾 Expenses Breakdown by Category</p>
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                            {Object.entries(expByCategory).map(([cat, amt]: any) => (
+                              <div key={cat} className="flex justify-between items-center text-sm bg-white dark:bg-card rounded px-2 py-1">
+                                <span className="text-muted-foreground truncate mr-2">{cat}</span>
+                                <span className="font-mono text-orange-600 whitespace-nowrap">${amt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                              </div>
+                            ))}
+                          </div>
                         </div>
+                      )}
+
+                      <div className="p-3 bg-muted/20 rounded-lg border border-border text-xs text-muted-foreground">
+                        <p className="font-medium mb-1">Period: {dateFrom} → {dateTo} · Net Margin: <span className={`font-bold ${profitData.margin >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{profitData.margin.toFixed(1)}%</span></p>
+                        <p>Net Profit = Revenue − COGS − Commissions − Expenses − Payment Fees ± FX Gain/Loss</p>
+                        <p className="mt-0.5 text-orange-600">🧾 Expenses = entries from the Expenses page (rent, salaries, utilities, etc.)</p>
                       </div>
-                    )}
-                    <div className="p-3 bg-muted/20 rounded-lg border border-border text-xs text-muted-foreground">
-                      <p className="font-medium mb-1">Period: {dateFrom} → {dateTo}</p>
-                      <p>Net Margin: <span className={`font-bold ${profitData.margin >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{profitData.margin.toFixed(1)}%</span></p>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* Placeholder for other reports */}
                 {selectedReport === 'performance' && (
