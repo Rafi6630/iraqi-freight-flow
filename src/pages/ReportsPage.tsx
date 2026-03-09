@@ -200,7 +200,7 @@ export default function ReportsPage() {
                         { label: 'Vendor Costs (COGS)', val: profitData.totalCogs, color: 'text-red-500', icon: '📦' },
                         { label: 'Gross Profit', val: profitData.grossProfit, color: profitData.grossProfit >= 0 ? 'text-emerald-600' : 'text-red-600', icon: '📊' },
                         { label: 'Commissions', val: profitData.totalCommissions, color: 'text-amber-600', icon: '🤝' },
-                        { label: 'Operating Expenses', val: profitData.totalExpenses, color: 'text-orange-600', icon: '🏢' },
+                        { label: 'Expenses', val: profitData.totalExpenses, color: 'text-orange-600', icon: '🧾' },
                         { label: 'Payment Fees', val: profitData.totalPaymentFees, color: 'text-slate-600', icon: '🏦' },
                         { label: 'FX Gain / Loss', val: profitData.fxGainLoss, color: profitData.fxGainLoss >= 0 ? 'text-emerald-600' : 'text-red-500', icon: '💱' },
                         { label: 'Net Profit', val: profitData.netProfit, color: profitData.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700', icon: '🏆' },
@@ -341,7 +341,7 @@ export default function ReportsPage() {
                       { label: '  (−) Vendor Costs (COGS)', val: -profitData.totalCogs, indent: true, bold: false, positive: false },
                       { label: '= Gross Profit', val: profitData.grossProfit, indent: false, bold: true, positive: profitData.grossProfit >= 0 },
                       { label: '  (−) Partner Commissions', val: -profitData.totalCommissions, indent: true, bold: false, positive: false },
-                      { label: '  (−) Operating Expenses', val: -profitData.totalExpenses, indent: true, bold: false, positive: false },
+                      { label: '  (−) Expenses', val: -profitData.totalExpenses, indent: true, bold: false, positive: false },
                       { label: '  (−) Payment / Bank Fees', val: -profitData.totalPaymentFees, indent: true, bold: false, positive: false },
                       { label: '  (+/−) FX Gain / Loss', val: fxData.net, indent: true, bold: false, positive: fxData.net >= 0 },
                       { label: '= Net Profit', val: profitData.netProfit, indent: false, bold: true, positive: profitData.netProfit >= 0 },
@@ -359,7 +359,7 @@ export default function ReportsPage() {
                     {/* Expense breakdown */}
                     {Object.keys(profitData.expenseByCategory).length > 0 && (
                       <div className="mt-4 p-3 bg-muted/20 rounded-lg border border-border">
-                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">🏢 Expense Breakdown by Category</p>
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">🧾 Expenses Breakdown by Category</p>
                         <div className="grid grid-cols-2 gap-2">
                           {Object.entries(profitData.expenseByCategory).map(([cat, amt]: any) => (
                             <div key={cat} className="flex justify-between items-center text-sm">
