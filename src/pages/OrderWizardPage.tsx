@@ -206,7 +206,7 @@ export default function OrderWizardPage() {
         {currentStep === 5 && <Step5 quotations={quotations} readOnly={!!order.closed_at} />}
         {currentStep === 6 && <Step6 order={order} onSave={saveOrderField} readOnly={!!order.closed_at} />}
         {currentStep === 7 && <Step7 order={order} quotations={quotations} costs={costs} invoices={invoices} vendorBills={vendorBills} insertInvoice={insertInvoice} insertBill={insertBill} customerName={customerName} vendors={vendors} payments={payments} customers={customers} employees={employees} partners={partners} companySettings={companySettings} readOnly={!!order.closed_at} />}
-        {currentStep === 8 && <Step8 invoices={invoices} vendorBills={vendorBills} orderId={order.id} vendors={vendors} customers={customers} readOnly={!!order.closed_at} />}
+        {currentStep === 8 && <Step8 invoices={invoices} vendorBills={vendorBills} orderId={order.id} vendors={vendors} customers={customers} order={order} readOnly={!!order.closed_at} />}
         {currentStep === 9 && <Step9 order={order} costs={costs} invoices={invoices} vendorBills={vendorBills} payments={payments} employees={employees} partners={partners} onSave={saveOrderField} />}
       </div>
 
@@ -239,6 +239,8 @@ function Step1({ order, customers, employees, onSave, readOnly }: any) {
     origin_country: order.origin_country || '', origin_city: order.origin_city || '',
     destination_country: order.destination_country || '', destination_city: order.destination_city || '',
     responsible_employee_id: order.responsible_employee_id || '',
+    fx_rate: order.fx_rate || DEFAULT_FX_RATE,
+    fx_date: order.fx_date || new Date().toISOString().split('T')[0],
   });
   const setField = (k: string, v: any) => { if (!readOnly) setForm(p => ({ ...p, [k]: v })); };
 
@@ -275,6 +277,37 @@ function Step1({ order, customers, employees, onSave, readOnly }: any) {
         <div><Label>Dest Country *</Label><Input value={form.destination_country} onChange={e => setField('destination_country', e.target.value)} disabled={readOnly} /></div>
         <div><Label>Dest City</Label><Input value={form.destination_city} onChange={e => setField('destination_city', e.target.value)} disabled={readOnly} /></div>
       </div>
+
+      {/* FX Rate — manually entered, no exchange office needed */}
+      <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+        <p className="text-sm font-semibold text-amber-800 mb-3">💱 Order FX Rate (Manual Entry)</p>
+        <p className="text-xs text-amber-700 mb-3">Set the USD → IQD exchange rate for this order. This rate will be used across all steps (costs, quotation, invoices, bills).</p>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <Label className="text-xs">Exchange Rate (1 USD = ? IQD) *</Label>
+            <Input
+              type="number"
+              value={form.fx_rate}
+              onChange={e => setField('fx_rate', parseFloat(e.target.value) || DEFAULT_FX_RATE)}
+              disabled={readOnly}
+              className="font-mono text-base"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              e.g. {form.fx_rate.toLocaleString()} → $1,000 = IQD {(1000 * form.fx_rate).toLocaleString()}
+            </p>
+          </div>
+          <div>
+            <Label className="text-xs">Rate Date *</Label>
+            <Input
+              type="date"
+              value={form.fx_date}
+              onChange={e => setField('fx_date', e.target.value)}
+              disabled={readOnly}
+            />
+          </div>
+        </div>
+      </div>
+
       {!readOnly && <Button onClick={() => onSave(form)}>Save Step 1</Button>}
     </div>
   );
@@ -322,8 +355,10 @@ function Step3({ orderId, costs, vendors, partners, employees, order, insertCost
     partner_id: '', partner_rate: 0, partner_amount_usd: 0,
     employee_id: order?.responsible_employee_id || '', employee_rate: 0, employee_amount_usd: 0,
   });
-  const fxRate = DEFAULT_FX_RATE;
-  const dual = calculateDualAmount(form.amount_usd, form.currency_input as any, fxRate, new Date().toISOString().split('T')[0]);
+  // Use order's manually entered FX rate — never pull from exchange_rates table
+  const fxRate = order?.fx_rate || DEFAULT_FX_RATE;
+  const fxDate = order?.fx_date || new Date().toISOString().split('T')[0];
+  const dual = calculateDualAmount(form.amount_usd, form.currency_input as any, fxRate, fxDate);
   const setField = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }));
   const setCommField = (k: string, v: any) => setCommissionForm(p => ({ ...p, [k]: v }));
 
@@ -333,7 +368,7 @@ function Step3({ orderId, costs, vendors, partners, employees, order, insertCost
       order_id: orderId, vendor_id: form.vendor_id, category: form.category,
       description: form.description, due_date: form.due_date || null,
       amount_usd: dual.amount_usd, amount_iqd: dual.amount_iqd,
-      fx_rate: fxRate, fx_date: new Date().toISOString().split('T')[0],
+      fx_rate: fxRate, fx_date: fxDate,
       currency_input: form.currency_input, is_fx_locked: true,
     });
     setForm({ vendor_id: '', category: '', description: '', amount_usd: 0, due_date: '', currency_input: 'USD' });
@@ -341,22 +376,22 @@ function Step3({ orderId, costs, vendors, partners, employees, order, insertCost
 
   const handleAddCommission = async () => {
     if (commissionForm.partner_id && commissionForm.partner_amount_usd > 0) {
-      const pDual = calculateDualAmount(commissionForm.partner_amount_usd, 'USD', fxRate, new Date().toISOString().split('T')[0]);
+      const pDual = calculateDualAmount(commissionForm.partner_amount_usd, 'USD', fxRate, fxDate);
       await insertCost.mutateAsync({
         order_id: orderId, vendor_id: null, category: 'partner_commission',
         description: `Partner/Broker Commission (${commissionForm.partner_rate}%)`,
         amount_usd: pDual.amount_usd, amount_iqd: pDual.amount_iqd,
-        fx_rate: fxRate, fx_date: new Date().toISOString().split('T')[0],
+        fx_rate: fxRate, fx_date: fxDate,
         currency_input: 'USD', is_fx_locked: true,
       });
     }
     if (commissionForm.employee_id && commissionForm.employee_amount_usd > 0) {
-      const eDual = calculateDualAmount(commissionForm.employee_amount_usd, 'USD', fxRate, new Date().toISOString().split('T')[0]);
+      const eDual = calculateDualAmount(commissionForm.employee_amount_usd, 'USD', fxRate, fxDate);
       await insertCost.mutateAsync({
         order_id: orderId, vendor_id: null, category: 'employee_incentive',
         description: `Employee Incentive (${commissionForm.employee_rate}%)`,
         amount_usd: eDual.amount_usd, amount_iqd: eDual.amount_iqd,
-        fx_rate: fxRate, fx_date: new Date().toISOString().split('T')[0],
+        fx_rate: fxRate, fx_date: fxDate,
         currency_input: 'USD', is_fx_locked: true,
       });
     }
@@ -392,7 +427,15 @@ function Step3({ orderId, costs, vendors, partners, employees, order, insertCost
 
   return (
     <div className="space-y-4">
-      <h3 className="text-lg font-semibold">Step 3 — Cost Sheet</h3>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h3 className="text-lg font-semibold">Step 3 — Cost Sheet</h3>
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+          <span>💱</span>
+          <span className="font-mono font-semibold">{fxRate.toLocaleString()} IQD/USD</span>
+          <span className="text-amber-600">({fxDate})</span>
+          {!order?.fx_rate && <span className="text-amber-600 font-medium">← set in Step 1</span>}
+        </div>
+      </div>
 
       {/* Vendor Costs Table */}
       <p className="text-sm font-medium text-muted-foreground">Vendor Costs</p>
@@ -547,8 +590,9 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, custom
   const [quotationPriceUsd, setQuotationPriceUsd] = useState(0);
   const [validity, setValidity] = useState(30);
   const [quotationDescription, setQuotationDescription] = useState('');
-  const [fxDate, setFxDate] = useState(new Date().toISOString().split('T')[0]);
-  const [fxRateOverride, setFxRateOverride] = useState<number>(DEFAULT_FX_RATE);
+  // Pre-fill from the order's manually entered FX rate (Step 1)
+  const [fxDate, setFxDate] = useState(order?.fx_date || new Date().toISOString().split('T')[0]);
+  const [fxRateOverride, setFxRateOverride] = useState<number>(order?.fx_rate || DEFAULT_FX_RATE);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [previewOpen, setPreviewOpen] = useState(false);
   const [paymentTerms, setPaymentTerms] = useState([
@@ -2394,17 +2438,16 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
   );
 }
 
-function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
+function Step8({ invoices, vendorBills, orderId, vendors, customers, order, readOnly }: any) {
   const insertPayment = useInsertMutation('payments');
   const updateInvoice = useUpdateMutation('invoices');
   const updateBill = useUpdateMutation('vendor_bills');
   const { data: payments = [] } = useTableQuery<any>('payments', { filter: { order_id: orderId } });
+  // Default payment FX rate to order's locked rate from Step 1
+  const orderFxRate = order?.fx_rate || DEFAULT_FX_RATE;
 
   const arPayments = payments.filter((p: any) => p.direction === 'AR');
   const apPayments = payments.filter((p: any) => p.direction === 'AP');
-
-
-
 
   // AR payment form
   const [arForm, setArForm] = useState({
@@ -2413,7 +2456,7 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
     currency_input: 'USD',
     method: 'Bank Transfer',
     reference: '',
-    pay_fx_rate: DEFAULT_FX_RATE,
+    pay_fx_rate: orderFxRate,
     date: new Date().toISOString().split('T')[0],
     payment_fee_usd: 0,
     fee_description: '',
@@ -2426,7 +2469,7 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
     currency_input: 'USD',
     method: 'Bank Transfer',
     reference: '',
-    pay_fx_rate: DEFAULT_FX_RATE,
+    pay_fx_rate: orderFxRate,
     date: new Date().toISOString().split('T')[0],
     payment_fee_usd: 0,
     fee_description: '',
@@ -2889,8 +2932,9 @@ function Step9({ order, costs, invoices, vendorBills, payments, employees, partn
       toast.error('Commissions already generated for this order');
       return;
     }
-    const fxRate = DEFAULT_FX_RATE;
-    const fxDate = new Date().toISOString().split('T')[0];
+    // Use the order's manually entered FX rate from Step 1
+    const fxRate = order?.fx_rate || DEFAULT_FX_RATE;
+    const fxDate = order?.fx_date || new Date().toISOString().split('T')[0];
     let generated = 0;
 
     // Employee commissions based on responsible employee
