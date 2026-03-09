@@ -357,6 +357,12 @@ function Step3({ orderId, costs, vendors, partners, employees, order, insertCost
         currency_input: 'USD', is_fx_locked: true,
       });
     }
+    // Clear form after successful add
+    setCommissionForm(prev => ({
+      ...prev,
+      partner_id: '', partner_rate: 0, partner_amount_usd: 0,
+      employee_rate: 0, employee_amount_usd: 0,
+    }));
     toast.success('Commission/Incentive added');
   };
 
@@ -635,25 +641,31 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, custom
       currency_input: 'USD',
     });
 
+    // Fetch the newly created quotation ID once
+    const { data: newQuotationRow } = await (supabase.from('quotations') as any)
+      .select('id').eq('quote_no', quoteNo).single();
+    const newQuotationId = newQuotationRow?.id;
+
     // Save quotation services
-    for (const svc of serviceBreakdown) {
-      await (supabase.from('quotation_services') as any).insert({
-        quotation_id: (await (supabase.from('quotations') as any).select('id').eq('quote_no', quoteNo).single()).data?.id,
-        service_name: svc.description || svc.category || 'Service',
-        vendor_cost_usd: svc.vendor_cost_usd, vendor_cost_iqd: svc.vendor_cost_iqd,
-        service_fee_usd: svc.service_fee_usd, service_fee_iqd: svc.service_fee_iqd,
-        quoted_price_usd: svc.quoted_price_usd, quoted_price_iqd: svc.quoted_price_iqd,
-        margin_pct: Math.round(marginPct * 100) / 100,
-        fx_rate: fxRate, fx_date: fxDate,
-      });
+    if (newQuotationId) {
+      for (const svc of serviceBreakdown) {
+        await (supabase.from('quotation_services') as any).insert({
+          quotation_id: newQuotationId,
+          service_name: svc.description || svc.category || 'Service',
+          vendor_cost_usd: svc.vendor_cost_usd, vendor_cost_iqd: svc.vendor_cost_iqd,
+          service_fee_usd: svc.service_fee_usd, service_fee_iqd: svc.service_fee_iqd,
+          quoted_price_usd: svc.quoted_price_usd, quoted_price_iqd: svc.quoted_price_iqd,
+          margin_pct: Math.round(marginPct * 100) / 100,
+          fx_rate: fxRate, fx_date: fxDate,
+        });
+      }
     }
 
     // Save payment terms
-    const quotationId = (await (supabase.from('quotations') as any).select('id').eq('quote_no', quoteNo).single()).data?.id;
-    if (quotationId) {
+    if (newQuotationId) {
       for (const term of paymentTerms) {
         await (supabase.from('quotation_payment_terms') as any).insert({
-          quotation_id: quotationId,
+          quotation_id: newQuotationId,
           description: term.description, percentage: term.percentage,
           amount_usd: Math.round(quotationPriceUsd * (term.percentage / 100) * 100) / 100,
           amount_iqd: Math.round(quotationPriceUsd * (term.percentage / 100) * fxRate),
@@ -1083,7 +1095,6 @@ function Step4({ order, costs, quotations, insertQuotation, customerName, custom
 function Step5({ quotations }: any) {
   const queryClient = useQueryClient();
   const [uploading, setUploading] = useState(false);
-  const fileInputRef = useState<HTMLInputElement | null>(null);
 
   const latestQuotation = quotations[0];
 
@@ -1276,6 +1287,7 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
   const [billTaxRate, setBillTaxRate] = useState(0);
   const [billNotes, setBillNotes] = useState('');
   const [showAddBillForm, setShowAddBillForm] = useState(false);
+  const [showAddInvoiceForm, setShowAddInvoiceForm] = useState(false);
   const [manualBillVendorId, setManualBillVendorId] = useState('');
   const [manualBillDueDate, setManualBillDueDate] = useState(new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]);
   const [manualBillLineItems, setManualBillLineItems] = useState<{ description: string; qty: number; unit: string; unitCost: number }[]>([{ description: '', qty: 1, unit: 'Service', unitCost: 0 }]);
@@ -1320,42 +1332,50 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
     if (invoiceLineItems.length === 0) { toast.error('Add at least one line item'); return; }
     const year = new Date().getFullYear();
     const totalUsd = invoiceTotal;
+    // Capture base index BEFORE the loop to prevent race condition from cache invalidation
+    const baseIdx = invoices.length;
 
     if (quotationPaymentTerms.length > 0) {
-      // Generate one invoice per payment term
       let created = 0;
       for (let i = 0; i < quotationPaymentTerms.length; i++) {
         const term = quotationPaymentTerms[i];
         const pct = term.percentage || 0;
         const termUsd = Math.round(totalUsd * (pct / 100) * 100) / 100;
         const termIqd = Math.round(termUsd * fxRate);
-        const invNo = `INV-${year}-${String(invoices.length + created + 1).padStart(4, '0')}`;
-        // Calculate due date: offset from invoice date based on term index
+        const invNo = `INV-${year}-${String(baseIdx + i + 1).padStart(4, '0')}`;
         const termDueDays = (customer.payment_terms_days || 30) * (i + 1);
         const termDueDate = new Date(new Date(invoiceDate).getTime() + termDueDays * 86400000).toISOString().split('T')[0];
         try {
-          await insertInvoice.mutateAsync({
+          // Use direct supabase insert (not mutation hook) to avoid per-insert toast spam
+          const { error } = await (supabase.from('invoices') as any).insert({
             invoice_no: invNo, order_id: order.id, customer_id: order.customer_id,
             status: 'issued', amount_usd: termUsd, amount_iqd: termIqd,
             fx_rate: fxRate, fx_date: quotation.fx_date || new Date().toISOString().split('T')[0],
             is_fx_locked: true, issued_date: invoiceDate, due_date: termDueDate,
           });
+          if (error) throw error;
           created++;
         } catch (err: any) {
           toast.error(`Failed to create invoice for term ${i + 1}: ${err.message}`);
         }
       }
-      if (created > 0) toast.success(`${created} invoice(s) generated based on payment terms`);
+      if (created > 0) {
+        // Invalidate once after all inserts are done
+        queryClient.invalidateQueries({ queryKey: ['invoices'] });
+        toast.success(`${created} invoice(s) generated based on payment terms`);
+      }
     } else {
       // Single invoice (no payment terms)
-      const invNo = `INV-${year}-${String(invoices.length + 1).padStart(4, '0')}`;
+      const invNo = `INV-${year}-${String(baseIdx + 1).padStart(4, '0')}`;
       const totalIqd = Math.round(totalUsd * fxRate);
-      await insertInvoice.mutateAsync({
+      const { error } = await (supabase.from('invoices') as any).insert({
         invoice_no: invNo, order_id: order.id, customer_id: order.customer_id,
         status: 'issued', amount_usd: totalUsd, amount_iqd: totalIqd,
         fx_rate: fxRate, fx_date: quotation.fx_date || new Date().toISOString().split('T')[0],
         is_fx_locked: true, issued_date: invoiceDate, due_date: invoiceDueDate,
       });
+      if (error) { toast.error(`Failed to create invoice: ${error.message}`); return; }
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
       toast.success('Invoice generated');
     }
   };
@@ -1365,32 +1385,39 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
     vendorCosts.forEach((c: any) => { if (c.vendor_id) { if (!vendorGroups[c.vendor_id]) vendorGroups[c.vendor_id] = []; vendorGroups[c.vendor_id].push(c); } });
 
     const year = new Date().getFullYear();
-    let idx = vendorBills.length;
+    const baseIdx = vendorBills.length; // capture BEFORE loop
+    let billIdx = 0;
     let created = 0;
     for (const [vendorId, vCosts] of Object.entries(vendorGroups)) {
-      idx++;
+      billIdx++;
       const totalUsd = (vCosts as any[]).reduce((s: number, c: any) => s + Number(c.amount_usd || 0), 0);
       const vendor = vendors.find((v: any) => v.id === vendorId);
       const vendorDueDays = vendor?.payment_terms_days || 30;
-      const billNo = `BILL-${year}-${String(idx).padStart(4, '0')}`;
+      const billNo = `BILL-${year}-${String(baseIdx + billIdx).padStart(4, '0')}`;
       const taxAmount = totalUsd * (billTaxRate / 100);
       const finalUsd = totalUsd + taxAmount;
       const finalIqd = Math.round(finalUsd * fxRate);
       try {
-        await insertBill.mutateAsync({
+        // Use direct supabase insert to avoid per-insert toast spam
+        const { error } = await (supabase.from('vendor_bills') as any).insert({
           bill_no: billNo, order_id: order.id, vendor_id: vendorId,
           status: 'issued', amount_usd: finalUsd, amount_iqd: finalIqd,
           fx_rate: fxRate, fx_date: new Date().toISOString().split('T')[0], is_fx_locked: true,
           issued_date: billDate,
           due_date: new Date(Date.now() + vendorDueDays * 86400000).toISOString().split('T')[0],
         });
+        if (error) throw error;
         created++;
       } catch (err: any) {
         console.error(`Failed to create bill for vendor ${vendorId}:`, err);
-        toast.error(`Failed to create bill for ${vendor?.company || vendorId}: ${err.message}`);
+        toast.error(`Failed to create bill for ${vendor?.company || vendorId}: ${(err as any).message}`);
       }
     }
-    if (created > 0) toast.success(`${created} vendor bill(s) generated (commissions tracked separately in Finance)`);
+    if (created > 0) {
+      // Single invalidation after all inserts
+      queryClient.invalidateQueries({ queryKey: ['vendor_bills'] });
+      toast.success(`${created} vendor bill(s) generated (commissions tracked separately in Finance)`);
+    }
   };
 
   const handleAddManualBill = async () => {
@@ -1399,12 +1426,14 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
     const year = new Date().getFullYear();
     const billNo = `BILL-${year}-${String(vendorBills.length + 1).padStart(4, '0')}`;
     const totalIqd = Math.round(manualBillTotal * fxRate);
-    await insertBill.mutateAsync({
+    const { error } = await (supabase.from('vendor_bills') as any).insert({
       bill_no: billNo, order_id: order.id, vendor_id: manualBillVendorId,
       status: 'draft', amount_usd: manualBillTotal, amount_iqd: totalIqd,
       fx_rate: fxRate, fx_date: new Date().toISOString().split('T')[0], is_fx_locked: true,
       issued_date: billDate, due_date: manualBillDueDate,
     });
+    if (error) { toast.error(`Failed to create bill: ${error.message}`); return; }
+    queryClient.invalidateQueries({ queryKey: ['vendor_bills'] });
     setManualBillLineItems([{ description: '', qty: 1, unit: 'Service', unitCost: 0 }]);
     setManualBillVendorId('');
     setBillTaxRate(0);
@@ -1461,6 +1490,7 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
 
       // ---- AR: Generate Invoices from Quotation ----
       if (invoices.length === 0) {
+        const baseIdx = 0; // invoices.length is 0 here
         if (quotationPaymentTerms.length > 0) {
           let created = 0;
           for (let i = 0; i < quotationPaymentTerms.length; i++) {
@@ -1468,31 +1498,37 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
             const pct = term.percentage || 0;
             const termUsd = Math.round((quotation.total_usd || 0) * (pct / 100) * 100) / 100;
             const termIqd = Math.round(termUsd * fxRate);
-            const invNo = `INV-${year}-${String(created + 1).padStart(4, '0')}`;
+            const invNo = `INV-${year}-${String(baseIdx + i + 1).padStart(4, '0')}`;
             const termDueDays = (customer.payment_terms_days || 30) * (i + 1);
             const termDueDate = new Date(Date.now() + termDueDays * 86400000).toISOString().split('T')[0];
-            await insertInvoice.mutateAsync({
+            const { error } = await (supabase.from('invoices') as any).insert({
               invoice_no: invNo, order_id: order.id, customer_id: order.customer_id,
               status: 'issued', amount_usd: termUsd, amount_iqd: termIqd,
               fx_rate: fxRate, fx_date: quotation.fx_date || today,
               is_fx_locked: true, issued_date: today, due_date: termDueDate,
             });
-            created++;
+            if (!error) created++;
           }
-          toast.success(`${created} invoice(s) auto-generated from payment terms`);
+          if (created > 0) {
+            queryClient.invalidateQueries({ queryKey: ['invoices'] });
+            toast.success(`${created} invoice(s) auto-generated from payment terms`);
+          }
         } else {
           const invNo = `INV-${year}-0001`;
           const totalUsd = quotation.total_usd || 0;
           const totalIqd = quotation.total_iqd || Math.round(totalUsd * fxRate);
           const dueDays = customer.payment_terms_days || 30;
-          await insertInvoice.mutateAsync({
+          const { error } = await (supabase.from('invoices') as any).insert({
             invoice_no: invNo, order_id: order.id, customer_id: order.customer_id,
             status: 'issued', amount_usd: totalUsd, amount_iqd: totalIqd,
             fx_rate: fxRate, fx_date: quotation.fx_date || today,
             is_fx_locked: true, issued_date: today,
             due_date: new Date(Date.now() + dueDays * 86400000).toISOString().split('T')[0],
           });
-          toast.success('Invoice auto-generated from quotation total');
+          if (!error) {
+            queryClient.invalidateQueries({ queryKey: ['invoices'] });
+            toast.success('Invoice auto-generated from quotation total');
+          }
         }
       }
 
@@ -1501,6 +1537,7 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
         const vendorGroups: Record<string, any[]> = {};
         vendorCosts.forEach((c: any) => { if (c.vendor_id) { if (!vendorGroups[c.vendor_id]) vendorGroups[c.vendor_id] = []; vendorGroups[c.vendor_id].push(c); } });
         let billIdx = 0;
+        let billsCreated = 0;
         for (const [vendorId, vCosts] of Object.entries(vendorGroups)) {
           billIdx++;
           const totalUsd = (vCosts as any[]).reduce((s: number, c: any) => s + Number(c.amount_usd || 0), 0);
@@ -1508,19 +1545,20 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
           const vendor = vendors.find((v: any) => v.id === vendorId);
           const dueDays = vendor?.payment_terms_days || 30;
           const billNo = `BILL-${year}-${String(billIdx).padStart(4, '0')}`;
-          await insertBill.mutateAsync({
+          const { error } = await (supabase.from('vendor_bills') as any).insert({
             bill_no: billNo, order_id: order.id, vendor_id: vendorId,
             status: 'issued', amount_usd: totalUsd, amount_iqd: totalIqd,
             fx_rate: fxRate, fx_date: today, is_fx_locked: true,
             issued_date: today,
             due_date: new Date(Date.now() + dueDays * 86400000).toISOString().split('T')[0],
           });
+          if (!error) billsCreated++;
         }
-        if (billIdx > 0) toast.success(`${billIdx} vendor bill(s) auto-generated from cost sheet`);
+        if (billsCreated > 0) {
+          queryClient.invalidateQueries({ queryKey: ['vendor_bills'] });
+          toast.success(`${billsCreated} vendor bill(s) auto-generated from cost sheet`);
+        }
       }
-
-      queryClient.invalidateQueries({ queryKey: ['invoices'] });
-      queryClient.invalidateQueries({ queryKey: ['vendor_bills'] });
     } catch (err: any) {
       toast.error(`Auto-issue failed: ${err.message}`);
     } finally {
@@ -1533,8 +1571,8 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
       <h3 className="text-lg font-semibold">Step 7 — Issue Documents AR/AP</h3>
       <p className="text-sm text-muted-foreground">Generate invoices for customers and bills for vendors from quotation data. Broker commissions & employee incentives tracked separately in Finance.</p>
 
-      {/* Quick Auto-Issue from Quotation */}
-      {!hasInvoices && !hasBills && quotation && (
+      {/* Quick Auto-Issue from Quotation — show when invoices OR bills still needed */}
+      {(!hasInvoices || !hasBills) && quotation && (
         <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg space-y-3">
           <p className="text-sm font-semibold">⚡ Quick Issue — Auto-generate from Quotation</p>
           <p className="text-xs text-muted-foreground">
@@ -1569,8 +1607,8 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
           </div>
         )}
 
-        {/* Invoice Generation Form */}
-        {!hasInvoices && (
+        {/* Invoice Generation Form — show when no invoices yet OR when user explicitly adds more */}
+        {(!hasInvoices || showAddInvoiceForm) && (
           <div className="space-y-4 p-4 bg-muted/30 rounded-lg border border-border">
             <p className="text-sm font-semibold">📝 Generate Invoice from Quotation</p>
 
@@ -1766,6 +1804,13 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
             })}
           </div>
         )}
+
+        {/* Add Invoice button — always visible so users can add extra invoices if needed */}
+        <div>
+          <Button variant="outline" onClick={() => setShowAddInvoiceForm(prev => !prev)}>
+            <Plus className="w-4 h-4 mr-2" />{showAddInvoiceForm ? 'Cancel' : hasInvoices ? 'Add Another Invoice' : 'Add Invoice'}
+          </Button>
+        </div>
       </div>
 
       {/* ==================== ACCOUNTS PAYABLE (AP) ==================== */}
