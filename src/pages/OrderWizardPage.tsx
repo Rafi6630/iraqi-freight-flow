@@ -1279,6 +1279,7 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
   const [manualBillVendorId, setManualBillVendorId] = useState('');
   const [manualBillDueDate, setManualBillDueDate] = useState(new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]);
   const [manualBillLineItems, setManualBillLineItems] = useState<{ description: string; qty: number; unit: string; unitCost: number }[]>([{ description: '', qty: 1, unit: 'Service', unitCost: 0 }]);
+  const [autoIssuing, setAutoIssuing] = useState(false);
 
   const addManualBillLineItem = () => setManualBillLineItems(prev => [...prev, { description: '', qty: 1, unit: 'Service', unitCost: 0 }]);
   const removeManualBillLineItem = (idx: number) => setManualBillLineItems(prev => prev.filter((_, i) => i !== idx));
