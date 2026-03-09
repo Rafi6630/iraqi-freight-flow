@@ -1293,6 +1293,36 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
   const [manualBillLineItems, setManualBillLineItems] = useState<{ description: string; qty: number; unit: string; unitCost: number }[]>([{ description: '', qty: 1, unit: 'Service', unitCost: 0 }]);
   const [autoIssuing, setAutoIssuing] = useState(false);
   const [autoGeneratingBills, setAutoGeneratingBills] = useState(false);
+  const [editingBillId, setEditingBillId] = useState<string | null>(null);
+  const [editBillForm, setEditBillForm] = useState<any>({});
+  const [deleteBillTarget, setDeleteBillTarget] = useState<any>(null);
+
+  const handleSaveBillEdit = async (billId: string) => {
+    const { error } = await (supabase.from('vendor_bills') as any)
+      .update({
+        vendor_id: editBillForm.vendor_id,
+        amount_usd: editBillForm.amount_usd,
+        amount_iqd: editBillForm.amount_iqd,
+        paid_usd: editBillForm.paid_usd,
+        paid_iqd: editBillForm.paid_iqd,
+        issued_date: editBillForm.issued_date || null,
+        due_date: editBillForm.due_date || null,
+        status: editBillForm.status,
+      })
+      .eq('id', billId);
+    if (error) { toast.error(`Failed to update bill: ${error.message}`); return; }
+    queryClient.invalidateQueries({ queryKey: ['vendor_bills'] });
+    setEditingBillId(null);
+    toast.success('Bill updated');
+  };
+
+  const handleDeleteBill = async (bill: any) => {
+    const { error } = await (supabase.from('vendor_bills') as any).delete().eq('id', bill.id);
+    if (error) { toast.error(`Failed to delete bill: ${error.message}`); return; }
+    queryClient.invalidateQueries({ queryKey: ['vendor_bills'] });
+    setDeleteBillTarget(null);
+    toast.success(`Bill ${bill.bill_no} deleted`);
+  };
 
   // ─── Auto-generate vendor bills when Step 7 first loads ──────────────────
   // Fires once when: no bills exist yet, vendor costs are loaded, and quotation is available
@@ -1945,48 +1975,127 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
 
         {/* Existing Vendor Bills */}
         {hasBills && (
-          <div className="erp-table-container">
-            <table className="w-full text-sm">
-              <thead><tr className="border-b border-border bg-muted/50">
-                <th className="text-left px-4 py-2 font-medium text-muted-foreground">Bill #</th>
-                <th className="text-left px-4 py-2 font-medium text-muted-foreground">Vendor</th>
-                <th className="text-left px-4 py-2 font-medium text-muted-foreground">Date</th>
-                <th className="text-left px-4 py-2 font-medium text-muted-foreground">Due Date</th>
-                <th className="text-right px-4 py-2 font-medium text-muted-foreground">Total</th>
-                <th className="text-right px-4 py-2 font-medium text-muted-foreground">Paid</th>
-                <th className="text-right px-4 py-2 font-medium text-muted-foreground">Due</th>
-                <th className="text-center px-4 py-2 font-medium text-muted-foreground">Status</th>
-                <th className="text-center px-4 py-2 font-medium text-muted-foreground">Days Overdue</th>
-                <th className="w-20"></th>
-              </tr></thead>
-              <tbody>
-                {vendorBills.map((bill: any) => {
-                  const vendorName = vendors.find((v: any) => v.id === bill.vendor_id)?.company || 'Unknown';
-                  const dueUsd = (bill.amount_usd || 0) - (bill.paid_usd || 0);
-                  const billStatus = (bill.paid_usd || 0) >= bill.amount_usd ? 'paid' : (bill.paid_usd || 0) > 0 ? 'partial' : bill.due_date && new Date(bill.due_date) < new Date() ? 'overdue' : bill.status;
-                  const daysOverdue = getDaysOverdue(bill.due_date);
-                  return (
-                    <tr key={bill.id} className="border-b border-border hover:bg-muted/30 transition-colors">
-                      <td className="px-4 py-2 font-mono font-medium text-primary">{bill.bill_no}</td>
-                      <td className="px-4 py-2">{vendorName}</td>
-                      <td className="px-4 py-2 text-muted-foreground">{bill.issued_date || '—'}</td>
-                      <td className="px-4 py-2 text-muted-foreground">{bill.due_date || '—'}</td>
-                      <td className="px-4 py-2 text-right font-mono">{formatUSD(bill.amount_usd)}</td>
-                      <td className="px-4 py-2 text-right font-mono text-emerald-600">{formatUSD(bill.paid_usd || 0)}</td>
-                      <td className="px-4 py-2 text-right font-mono">{formatUSD(dueUsd)}</td>
-                      <td className="px-4 py-2 text-center"><StatusBadge status={billStatus} /></td>
-                      <td className="px-4 py-2 text-center">{daysOverdue > 0 ? <span className="text-destructive font-medium">{daysOverdue}</span> : '—'}</td>
-                      <td className="px-4 py-2">
-                        <div className="flex gap-1">
-                          <Button variant="ghost" size="sm" onClick={() => handleDownloadBillPdf(bill)}><FileDown className="w-3.5 h-3.5" /></Button>
-                          <Button variant="ghost" size="sm" onClick={() => window.print()}><Printer className="w-3.5 h-3.5" /></Button>
+          <div className="space-y-3">
+            {vendorBills.map((bill: any) => {
+              const vendorName = vendors.find((v: any) => v.id === bill.vendor_id)?.company || 'Unknown';
+              const dueUsd = (bill.amount_usd || 0) - (bill.paid_usd || 0);
+              const billStatus = (bill.paid_usd || 0) >= bill.amount_usd ? 'paid' : (bill.paid_usd || 0) > 0 ? 'partial' : bill.due_date && new Date(bill.due_date) < new Date() ? 'overdue' : bill.status;
+              const daysOverdue = getDaysOverdue(bill.due_date);
+              const isEditing = editingBillId === bill.id;
+
+              return (
+                <div key={bill.id} className="border border-border rounded-lg overflow-hidden">
+                  {/* Bill header row */}
+                  <div className="p-4 flex justify-between items-start">
+                    <div>
+                      <p className="font-mono font-semibold text-base text-primary">{bill.bill_no}</p>
+                      <p className="text-xs text-muted-foreground">Vendor: {vendorName}</p>
+                      <p className="text-xs text-muted-foreground">Issued: {bill.issued_date || '—'} • Due: {bill.due_date || '—'}</p>
+                      {daysOverdue > 0 && <p className="text-xs text-destructive font-medium mt-0.5">{daysOverdue} days overdue</p>}
+                    </div>
+                    <div className="text-right space-y-1">
+                      <StatusBadge status={billStatus} />
+                      <p className="text-lg font-bold">{formatUSD(bill.amount_usd)}</p>
+                      <p className="text-xs text-muted-foreground">{formatIQD(bill.amount_iqd)}</p>
+                      <p className="text-xs">Paid: <span className="text-emerald-600 font-medium">{formatUSD(bill.paid_usd || 0)}</span> | Due: <span className="font-medium">{formatUSD(dueUsd)}</span></p>
+                    </div>
+                  </div>
+
+                  {/* Inline edit form */}
+                  {isEditing && (
+                    <div className="border-t border-border p-4 bg-muted/20 space-y-3">
+                      <p className="text-sm font-semibold">✏️ Edit Bill</p>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div>
+                          <Label className="text-xs">Vendor</Label>
+                          <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                            value={editBillForm.vendor_id}
+                            onChange={e => setEditBillForm(p => ({ ...p, vendor_id: e.target.value }))}>
+                            {vendors.map((v: any) => <option key={v.id} value={v.id}>{v.company}</option>)}
+                          </select>
                         </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        <div>
+                          <Label className="text-xs">Amount (USD)</Label>
+                          <Input type="number" value={editBillForm.amount_usd || ''}
+                            onChange={e => {
+                              const usd = parseFloat(e.target.value) || 0;
+                              setEditBillForm(p => ({ ...p, amount_usd: usd, amount_iqd: Math.round(usd * fxRate) }));
+                            }} />
+                          <p className="text-xs text-muted-foreground mt-0.5">{formatIQD(editBillForm.amount_iqd)}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs">Issued Date</Label>
+                          <Input type="date" value={editBillForm.issued_date}
+                            onChange={e => setEditBillForm(p => ({ ...p, issued_date: e.target.value }))} />
+                        </div>
+                        <div>
+                          <Label className="text-xs">Due Date</Label>
+                          <Input type="date" value={editBillForm.due_date}
+                            onChange={e => setEditBillForm(p => ({ ...p, due_date: e.target.value }))} />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <Label className="text-xs">Status</Label>
+                          <Select value={editBillForm.status} onValueChange={v => setEditBillForm(p => ({ ...p, status: v }))}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="draft">Draft</SelectItem>
+                              <SelectItem value="issued">Issued</SelectItem>
+                              <SelectItem value="partial">Partial</SelectItem>
+                              <SelectItem value="paid">Paid</SelectItem>
+                              <SelectItem value="overdue">Overdue</SelectItem>
+                              <SelectItem value="cancelled">Cancelled</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <Label className="text-xs">Paid (USD)</Label>
+                          <Input type="number" value={editBillForm.paid_usd || ''}
+                            onChange={e => {
+                              const paid = parseFloat(e.target.value) || 0;
+                              setEditBillForm(p => ({ ...p, paid_usd: paid, paid_iqd: Math.round(paid * fxRate) }));
+                            }} />
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={() => handleSaveBillEdit(bill.id)}>Save Changes</Button>
+                        <Button size="sm" variant="outline" onClick={() => setEditingBillId(null)}>Cancel</Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Action bar */}
+                  <div className="border-t border-border px-4 py-2 flex flex-wrap gap-2 bg-muted/30">
+                    <Button variant="ghost" size="sm" onClick={() => handleDownloadBillPdf(bill)}>
+                      <FileDown className="w-3.5 h-3.5 mr-1" />Download PDF
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => window.print()}>
+                      <Printer className="w-3.5 h-3.5 mr-1" />Print
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => {
+                      setEditingBillId(isEditing ? null : bill.id);
+                      setEditBillForm({
+                        vendor_id: bill.vendor_id || '',
+                        amount_usd: bill.amount_usd || 0,
+                        amount_iqd: bill.amount_iqd || 0,
+                        paid_usd: bill.paid_usd || 0,
+                        paid_iqd: bill.paid_iqd || 0,
+                        issued_date: bill.issued_date || '',
+                        due_date: bill.due_date || '',
+                        status: bill.status || 'issued',
+                      });
+                    }}>
+                      <RefreshCw className="w-3.5 h-3.5 mr-1" />{isEditing ? 'Cancel Edit' : 'Edit'}
+                    </Button>
+                    <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive"
+                      onClick={() => setDeleteBillTarget(bill)}>
+                      <Trash2 className="w-3.5 h-3.5 mr-1" />Delete
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -2101,43 +2210,67 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
       </div>
 
       {/* ==================== COMMISSION & INCENTIVE TRACKING ==================== */}
-      {(partnerCommCosts.length > 0 || employeeIncentiveCosts.length > 0) && (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2 border-b border-border pb-2">
-            <div className="w-7 h-7 rounded-lg bg-purple-100 flex items-center justify-center"><span className="text-sm">🤝</span></div>
-            <h4 className="text-base font-semibold">Broker Commissions & Employee Incentives</h4>
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 border-b border-border pb-2">
+          <div className="w-7 h-7 rounded-lg bg-purple-100 flex items-center justify-center"><span className="text-sm">🤝</span></div>
+          <h4 className="text-base font-semibold">Broker Commissions & Employee Incentives</h4>
+        </div>
+        <p className="text-xs text-muted-foreground">Tracked separately in Finance. These are NOT included in vendor bills.</p>
+
+        {partnerCommCosts.length === 0 && employeeIncentiveCosts.length === 0 ? (
+          <div className="flex items-center gap-3 p-3 bg-muted/30 border border-border rounded-lg text-sm text-muted-foreground">
+            <span>No commissions or incentives added for this order.</span>
+            <span className="text-xs">Go to <strong>Step 3</strong> to add partner/broker commissions or employee incentives.</span>
           </div>
-          <p className="text-xs text-muted-foreground">These are tracked separately in Finance (Employee Commissions Management) and are NOT included in vendor bills.</p>
+        ) : (
           <div className="erp-table-container">
             <table className="w-full text-sm">
               <thead><tr className="border-b border-border bg-muted/50">
                 <th className="text-left px-3 py-2 font-medium text-muted-foreground">Type</th>
+                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Name</th>
                 <th className="text-left px-3 py-2 font-medium text-muted-foreground">Description</th>
                 <th className="text-right px-3 py-2 font-medium text-muted-foreground">Amount USD</th>
                 <th className="text-right px-3 py-2 font-medium text-muted-foreground">Amount IQD</th>
                 <th className="text-left px-3 py-2 font-medium text-muted-foreground">Payment Condition</th>
               </tr></thead>
               <tbody>
-                {partnerCommCosts.map((c: any) => (
-                  <tr key={c.id} className="border-b border-border">
-                    <td className="px-3 py-2">🤝 Broker Commission</td>
-                    <td className="px-3 py-2 text-muted-foreground">{c.description}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatUSD(c.amount_usd)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(c.amount_iqd)}</td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">Pay after customer pays</td>
-                  </tr>
-                ))}
-                {employeeIncentiveCosts.map((c: any) => (
-                  <tr key={c.id} className="border-b border-border">
-                    <td className="px-3 py-2">💰 Employee Incentive</td>
-                    <td className="px-3 py-2 text-muted-foreground">{c.description}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatUSD(c.amount_usd)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(c.amount_iqd)}</td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">On order completion</td>
-                  </tr>
-                ))}
+                {partnerCommCosts.map((c: any) => {
+                  // Try to resolve partner name from description (stored as "Partner/Broker Commission (X%)")
+                  // or from partners list if a partner_id was stored
+                  const partnerName = partners?.find((p: any) => p.id === c.partner_id)?.company
+                    || partners?.find((p: any) => p.id === c.vendor_id)?.company
+                    || '—';
+                  return (
+                    <tr key={c.id} className="border-b border-border">
+                      <td className="px-3 py-2 whitespace-nowrap">🤝 Broker Commission</td>
+                      <td className="px-3 py-2 font-medium">{partnerName}</td>
+                      <td className="px-3 py-2 text-muted-foreground">{c.description}</td>
+                      <td className="px-3 py-2 text-right font-mono">{formatUSD(c.amount_usd)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(c.amount_iqd)}</td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground">Pay after customer pays</td>
+                    </tr>
+                  );
+                })}
+                {employeeIncentiveCosts.map((c: any) => {
+                  const empName = employees?.find((e: any) => e.id === c.employee_id)?.name
+                    || employees?.find((e: any) => e.id === c.vendor_id)?.name
+                    || (order.responsible_employee_id
+                        ? employees?.find((e: any) => e.id === order.responsible_employee_id)?.name
+                        : null)
+                    || '—';
+                  return (
+                    <tr key={c.id} className="border-b border-border">
+                      <td className="px-3 py-2 whitespace-nowrap">💰 Employee Incentive</td>
+                      <td className="px-3 py-2 font-medium">{empName}</td>
+                      <td className="px-3 py-2 text-muted-foreground">{c.description}</td>
+                      <td className="px-3 py-2 text-right font-mono">{formatUSD(c.amount_usd)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(c.amount_iqd)}</td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground">On order completion</td>
+                    </tr>
+                  );
+                })}
                 <tr className="bg-muted/30 font-medium">
-                  <td colSpan={2} className="px-3 py-2 text-right">Total</td>
+                  <td colSpan={3} className="px-3 py-2 text-right">Total</td>
                   <td className="px-3 py-2 text-right font-mono">{formatUSD(totalCommUsd)}</td>
                   <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatIQD(totalCommIqd)}</td>
                   <td></td>
@@ -2145,8 +2278,8 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
               </tbody>
             </table>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* ==================== SUMMARY SECTION ==================== */}
       <div className="space-y-3">
@@ -2204,6 +2337,39 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
           {hasInvoices && hasBills ? '✅ At least one invoice and one bill generated. You can complete this step.' : '⚠ Generate at least one invoice (AR) and one vendor bill (AP) to complete this step.'}
         </p>
       </div>
+
+      {/* Delete Bill Confirmation Dialog */}
+      {deleteBillTarget && (
+        <Dialog open={!!deleteBillTarget} onOpenChange={() => setDeleteBillTarget(null)}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Delete Vendor Bill</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 py-2">
+              <p className="text-sm text-muted-foreground">
+                Are you sure you want to delete bill <span className="font-mono font-semibold text-foreground">{deleteBillTarget.bill_no}</span>?
+              </p>
+              <p className="text-sm">
+                Vendor: <span className="font-medium">{vendors.find((v: any) => v.id === deleteBillTarget.vendor_id)?.company || '—'}</span>
+              </p>
+              <p className="text-sm">
+                Amount: <span className="font-mono font-medium text-destructive">{formatUSD(deleteBillTarget.amount_usd)}</span>
+              </p>
+              {(deleteBillTarget.paid_usd || 0) > 0 && (
+                <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded p-2">
+                  ⚠ This bill has recorded payments of {formatUSD(deleteBillTarget.paid_usd)}. Deleting it will NOT delete those payment records.
+                </p>
+              )}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={() => setDeleteBillTarget(null)}>Cancel</Button>
+              <Button variant="destructive" onClick={() => handleDeleteBill(deleteBillTarget)}>
+                <Trash2 className="w-4 h-4 mr-1" />Delete Bill
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }
