@@ -1450,10 +1450,106 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
     return inv.status || 'draft';
   };
 
+  const [autoIssuing, setAutoIssuing] = useState(false);
+
+  const handleAutoIssueFromQuotation = async () => {
+    if (!quotation) { toast.error('No quotation found. Go to Step 4.'); return; }
+    setAutoIssuing(true);
+    try {
+      const year = new Date().getFullYear();
+      const today = new Date().toISOString().split('T')[0];
+
+      // ---- AR: Generate Invoices from Quotation ----
+      if (invoices.length === 0) {
+        if (quotationPaymentTerms.length > 0) {
+          let created = 0;
+          for (let i = 0; i < quotationPaymentTerms.length; i++) {
+            const term = quotationPaymentTerms[i];
+            const pct = term.percentage || 0;
+            const termUsd = Math.round((quotation.total_usd || 0) * (pct / 100) * 100) / 100;
+            const termIqd = Math.round(termUsd * fxRate);
+            const invNo = `INV-${year}-${String(created + 1).padStart(4, '0')}`;
+            const termDueDays = (customer.payment_terms_days || 30) * (i + 1);
+            const termDueDate = new Date(Date.now() + termDueDays * 86400000).toISOString().split('T')[0];
+            await insertInvoice.mutateAsync({
+              invoice_no: invNo, order_id: order.id, customer_id: order.customer_id,
+              status: 'issued', amount_usd: termUsd, amount_iqd: termIqd,
+              fx_rate: fxRate, fx_date: quotation.fx_date || today,
+              is_fx_locked: true, issued_date: today, due_date: termDueDate,
+            });
+            created++;
+          }
+          toast.success(`${created} invoice(s) auto-generated from payment terms`);
+        } else {
+          const invNo = `INV-${year}-0001`;
+          const totalUsd = quotation.total_usd || 0;
+          const totalIqd = quotation.total_iqd || Math.round(totalUsd * fxRate);
+          const dueDays = customer.payment_terms_days || 30;
+          await insertInvoice.mutateAsync({
+            invoice_no: invNo, order_id: order.id, customer_id: order.customer_id,
+            status: 'issued', amount_usd: totalUsd, amount_iqd: totalIqd,
+            fx_rate: fxRate, fx_date: quotation.fx_date || today,
+            is_fx_locked: true, issued_date: today,
+            due_date: new Date(Date.now() + dueDays * 86400000).toISOString().split('T')[0],
+          });
+          toast.success('Invoice auto-generated from quotation total');
+        }
+      }
+
+      // ---- AP: Generate Vendor Bills from Cost Sheet ----
+      if (vendorBills.length === 0 && vendorCosts.length > 0) {
+        const vendorGroups: Record<string, any[]> = {};
+        vendorCosts.forEach((c: any) => { if (c.vendor_id) { if (!vendorGroups[c.vendor_id]) vendorGroups[c.vendor_id] = []; vendorGroups[c.vendor_id].push(c); } });
+        let billIdx = 0;
+        for (const [vendorId, vCosts] of Object.entries(vendorGroups)) {
+          billIdx++;
+          const totalUsd = (vCosts as any[]).reduce((s: number, c: any) => s + Number(c.amount_usd || 0), 0);
+          const totalIqd = Math.round(totalUsd * fxRate);
+          const vendor = vendors.find((v: any) => v.id === vendorId);
+          const dueDays = vendor?.payment_terms_days || 30;
+          const billNo = `BILL-${year}-${String(billIdx).padStart(4, '0')}`;
+          await insertBill.mutateAsync({
+            bill_no: billNo, order_id: order.id, vendor_id: vendorId,
+            status: 'issued', amount_usd: totalUsd, amount_iqd: totalIqd,
+            fx_rate: fxRate, fx_date: today, is_fx_locked: true,
+            issued_date: today,
+            due_date: new Date(Date.now() + dueDays * 86400000).toISOString().split('T')[0],
+          });
+        }
+        if (billIdx > 0) toast.success(`${billIdx} vendor bill(s) auto-generated from cost sheet`);
+      }
+
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      queryClient.invalidateQueries({ queryKey: ['vendor_bills'] });
+    } catch (err: any) {
+      toast.error(`Auto-issue failed: ${err.message}`);
+    } finally {
+      setAutoIssuing(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <h3 className="text-lg font-semibold">Step 7 — Issue Documents AR/AP</h3>
-      <p className="text-sm text-muted-foreground">Generate invoices for customers and bills for vendors. Broker commissions & employee incentives tracked separately in Finance.</p>
+      <p className="text-sm text-muted-foreground">Generate invoices for customers and bills for vendors from quotation data. Broker commissions & employee incentives tracked separately in Finance.</p>
+
+      {/* Quick Auto-Issue from Quotation */}
+      {!hasInvoices && !hasBills && quotation && (
+        <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg space-y-3">
+          <p className="text-sm font-semibold">⚡ Quick Issue — Auto-generate from Quotation</p>
+          <p className="text-xs text-muted-foreground">
+            This will automatically create invoices from quotation totals/payment terms and vendor bills from the cost sheet.
+          </p>
+          <div className="text-sm space-y-1">
+            <p>• <strong>AR Invoice:</strong> {quotationPaymentTerms.length > 0 ? `${quotationPaymentTerms.length} invoices (by payment terms)` : '1 invoice'} — Total: {formatUSD(quotation.total_usd || 0)}</p>
+            <p>• <strong>AP Bills:</strong> {Object.keys(vendorCosts.reduce((g: Record<string, boolean>, c: any) => { if (c.vendor_id) g[c.vendor_id] = true; return g; }, {})).length} vendor bill(s) — Total: {formatUSD(vendorCosts.reduce((s: number, c: any) => s + (c.amount_usd || 0), 0))}</p>
+          </div>
+          <Button onClick={handleAutoIssueFromQuotation} disabled={autoIssuing} size="lg">
+            <FileDown className="w-4 h-4 mr-2" />
+            {autoIssuing ? 'Issuing...' : 'Auto Issue All Documents'}
+          </Button>
+        </div>
+      )}
 
       {/* ==================== ACCOUNTS RECEIVABLE (AR) ==================== */}
       <div className="space-y-4">
