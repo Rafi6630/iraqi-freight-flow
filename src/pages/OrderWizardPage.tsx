@@ -1451,7 +1451,6 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
     return inv.status || 'draft';
   };
 
-  const [autoIssuing, setAutoIssuing] = useState(false);
 
   const handleAutoIssueFromQuotation = async () => {
     if (!quotation) { toast.error('No quotation found. Go to Step 4.'); return; }
