@@ -8,6 +8,8 @@ import { useState, useMemo } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { DEFAULT_FX_RATE } from '@/lib/currency';
 import { PerformanceReport } from '@/components/reports/PerformanceReport';
+import { PartnerReport } from '@/components/reports/PartnerReport';
+import { YearlyReport } from '@/components/reports/YearlyReport';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -329,9 +331,12 @@ export default function ReportsPage() {
                   <PerformanceReport dateFrom={dateFrom} dateTo={dateTo} />
                 )}
 
-                {/* Placeholder for other reports */}
-                {['partner', 'yearly'].includes(selectedReport) && (
-                  <p className="text-muted-foreground py-8 text-center">Add data to generate this report. Create orders, invoices, and payments to see metrics here.</p>
+                {selectedReport === 'partner' && (
+                  <PartnerReport dateFrom={dateFrom} dateTo={dateTo} />
+                )}
+
+                {selectedReport === 'yearly' && (
+                  <YearlyReport dateFrom={dateFrom} dateTo={dateTo} />
                 )}
               </>
             )}
