@@ -2438,6 +2438,7 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
 }
 
 function Step9({ order, costs, invoices, vendorBills, payments, employees, partners, onSave }: any) {
+  const { isAdmin } = useAuth();
   const insertCommission = useInsertMutation('commissions');
   const { data: commissions = [] } = useTableQuery<any>('commissions', { filter: { order_id: order.id } });
 
