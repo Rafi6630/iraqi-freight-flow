@@ -30,8 +30,9 @@ const reportTypes = [
 const COLORS = ['hsl(217, 91%, 60%)', 'hsl(142, 71%, 45%)', 'hsl(38, 92%, 50%)', 'hsl(0, 84%, 60%)', 'hsl(262, 83%, 58%)'];
 
 export default function ReportsPage() {
-  const [dateFrom, setDateFrom] = useState('2024-04-01');
-  const [dateTo, setDateTo] = useState('2024-04-30');
+  const currentYear = new Date().getFullYear();
+  const [dateFrom, setDateFrom] = useState(`${currentYear}-01-01`);
+  const [dateTo, setDateTo] = useState(`${currentYear}-12-31`);
   const [selectedReport, setSelectedReport] = useState('profitability');
 
   const { data: invoices = [], isLoading: invLoading } = useTableQuery<any>('invoices');
@@ -39,6 +40,7 @@ export default function ReportsPage() {
   const { data: payments = [] } = useTableQuery<any>('payments');
   const { data: orders = [] } = useTableQuery<any>('orders');
   const { data: expenses = [] } = useTableQuery<any>('expenses');
+  const { data: orderCosts = [] } = useTableQuery<any>('order_costs');
   const { data: customers = [] } = useTableQuery<any>('customers');
   const { data: vendors = [] } = useTableQuery<any>('vendors');
 
@@ -52,23 +54,32 @@ export default function ReportsPage() {
   };
 
   const filteredInvoices = filterByDate(invoices, 'issued_date');
+  const filteredBills = filterByDate(vendorBills, 'issued_date');
   const filteredPayments = filterByDate(payments, 'date');
   const filteredExpenses = filterByDate(expenses, 'date');
+  const filteredOrderCosts = filterByDate(orderCosts, 'created_at');
 
-  // Profitability data
+  // Profitability data — use order_costs (vendor costs) not vendorBills for COGS
   const profitData = useMemo(() => {
     const totalRevenue = filteredInvoices.reduce((s: number, i: any) => s + (i.amount_usd || 0), 0);
-    const totalCosts = vendorBills.reduce((s: number, b: any) => s + (b.amount_usd || 0), 0);
+    // Use both vendor bills and order_costs for most accurate COGS
+    const totalCogs = filteredBills.reduce((s: number, b: any) => s + (b.amount_usd || 0), 0) ||
+      filteredOrderCosts.filter((c: any) => c.category !== 'partner_commission' && c.category !== 'employee_incentive')
+        .reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
+    const totalCommissions = filteredOrderCosts
+      .filter((c: any) => c.category === 'partner_commission' || c.category === 'employee_incentive')
+      .reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
     const totalExpenses = filteredExpenses.reduce((s: number, e: any) => s + (e.amount_usd || 0), 0);
-    const netProfit = totalRevenue - totalCosts - totalExpenses;
-    return { totalRevenue, totalCosts, totalExpenses, netProfit };
-  }, [filteredInvoices, vendorBills, filteredExpenses]);
+    const grossProfit = totalRevenue - totalCogs;
+    const netProfit = grossProfit - totalCommissions - totalExpenses;
+    return { totalRevenue, totalCogs, totalCommissions, totalExpenses, grossProfit, netProfit };
+  }, [filteredInvoices, filteredBills, filteredOrderCosts, filteredExpenses]);
 
-  // AR Aging
+  // AR Aging — only unpaid invoices in date range
   const arAging = useMemo(() => {
     const now = new Date();
     const buckets = { current: 0, days30: 0, days60: 0, days90: 0 };
-    invoices.filter((i: any) => i.status !== 'paid').forEach((i: any) => {
+    filteredInvoices.filter((i: any) => i.status !== 'paid').forEach((i: any) => {
       const outstanding = (i.amount_usd || 0) - (i.paid_usd || 0);
       if (!i.due_date) { buckets.current += outstanding; return; }
       const days = Math.floor((now.getTime() - new Date(i.due_date).getTime()) / 86400000);
@@ -83,13 +94,13 @@ export default function ReportsPage() {
       { bucket: '31-60 Days', amount: buckets.days60 },
       { bucket: '90+ Days', amount: buckets.days90 },
     ];
-  }, [invoices]);
+  }, [filteredInvoices]);
 
-  // AP Aging
+  // AP Aging — only unpaid vendor bills in date range
   const apAging = useMemo(() => {
     const now = new Date();
     const buckets = { current: 0, days30: 0, days60: 0, days90: 0 };
-    vendorBills.filter((b: any) => b.status !== 'paid').forEach((b: any) => {
+    filteredBills.filter((b: any) => b.status !== 'paid').forEach((b: any) => {
       const outstanding = (b.amount_usd || 0) - (b.paid_usd || 0);
       if (!b.due_date) { buckets.current += outstanding; return; }
       const days = Math.floor((now.getTime() - new Date(b.due_date).getTime()) / 86400000);
@@ -104,7 +115,7 @@ export default function ReportsPage() {
       { bucket: '31-60 Days', amount: buckets.days60 },
       { bucket: '90+ Days', amount: buckets.days90 },
     ];
-  }, [vendorBills]);
+  }, [filteredBills]);
 
   // Cash Flow
   const cashFlow = useMemo(() => {
@@ -173,16 +184,19 @@ export default function ReportsPage() {
                 {/* Profitability */}
                 {selectedReport === 'profitability' && (
                   <div className="space-y-4">
-                    <div className="grid grid-cols-4 gap-4">
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                       {[
-                        { label: 'Revenue', val: profitData.totalRevenue },
-                        { label: 'Costs', val: profitData.totalCosts },
-                        { label: 'Expenses', val: profitData.totalExpenses },
-                        { label: 'Net Profit', val: profitData.netProfit },
+                        { label: 'Revenue', val: profitData.totalRevenue, color: 'text-green-600' },
+                        { label: 'Vendor Costs (COGS)', val: profitData.totalCogs, color: 'text-red-500' },
+                        { label: 'Gross Profit', val: profitData.grossProfit, color: profitData.grossProfit >= 0 ? 'text-emerald-600' : 'text-red-600' },
+                        { label: 'Commissions', val: profitData.totalCommissions, color: 'text-amber-600' },
+                        { label: 'Operating Expenses', val: profitData.totalExpenses, color: 'text-orange-600' },
+                        { label: 'Net Profit', val: profitData.netProfit, color: profitData.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700' },
                       ].map(m => (
                         <div key={m.label} className="p-4 rounded-lg bg-muted/50">
-                          <p className="text-xs text-muted-foreground">{m.label}</p>
-                          <CurrencyDisplay usd={m.val} iqd={m.val * DEFAULT_FX_RATE} size="md" layout="stacked" />
+                          <p className="text-xs text-muted-foreground mb-1">{m.label}</p>
+                          <p className={`text-lg font-bold font-mono ${m.color}`}>${m.val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                          <p className="text-xs text-muted-foreground">{(m.val * DEFAULT_FX_RATE).toLocaleString()} IQD</p>
                         </div>
                       ))}
                     </div>
@@ -312,8 +326,9 @@ export default function ReportsPage() {
                   <div className="space-y-2">
                     {[
                       { label: 'Revenue', val: profitData.totalRevenue },
-                      { label: '(-) COGS / Vendor Costs', val: -profitData.totalCosts },
-                      { label: '= Gross Profit', val: profitData.totalRevenue - profitData.totalCosts },
+                      { label: '(-) Vendor Costs (COGS)', val: -profitData.totalCogs },
+                      { label: '= Gross Profit', val: profitData.grossProfit },
+                      { label: '(-) Partner & Employee Commissions', val: -profitData.totalCommissions },
                       { label: '(-) Operating Expenses', val: -profitData.totalExpenses },
                       { label: '(+/-) FX Gain/Loss', val: fxData.net },
                       { label: '= Net Profit', val: profitData.netProfit + fxData.net },
