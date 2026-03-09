@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Check, ChevronRight, Lock, LockOpen, Plus, Trash2, FileDown, Eye, Send, Upload, Printer, RefreshCw, AlertTriangle } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
@@ -1292,6 +1292,74 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
   const [manualBillDueDate, setManualBillDueDate] = useState(new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]);
   const [manualBillLineItems, setManualBillLineItems] = useState<{ description: string; qty: number; unit: string; unitCost: number }[]>([{ description: '', qty: 1, unit: 'Service', unitCost: 0 }]);
   const [autoIssuing, setAutoIssuing] = useState(false);
+  const [autoGeneratingBills, setAutoGeneratingBills] = useState(false);
+
+  // ─── Auto-generate vendor bills when Step 7 first loads ──────────────────
+  // Fires once when: no bills exist yet, vendor costs are loaded, and quotation is available
+  const autoGenBillsRanRef = useRef(false);
+  useEffect(() => {
+    if (
+      autoGenBillsRanRef.current    // already ran
+      || vendorBills.length > 0      // bills already exist
+      || vendorCosts.length === 0    // no costs to bill
+      || !quotation                  // no quotation yet
+      || autoGeneratingBills         // already in progress
+    ) return;
+
+    autoGenBillsRanRef.current = true; // mark as ran so it never fires twice
+
+    const autoGen = async () => {
+      setAutoGeneratingBills(true);
+      try {
+        const year = new Date().getFullYear();
+        const today = new Date().toISOString().split('T')[0];
+        // Group costs by vendor
+        const vendorGroups: Record<string, any[]> = {};
+        vendorCosts.forEach((c: any) => {
+          if (c.vendor_id) {
+            if (!vendorGroups[c.vendor_id]) vendorGroups[c.vendor_id] = [];
+            vendorGroups[c.vendor_id].push(c);
+          }
+        });
+
+        let billIdx = 0;
+        let created = 0;
+        for (const [vendorId, vCosts] of Object.entries(vendorGroups)) {
+          billIdx++;
+          const totalUsd = (vCosts as any[]).reduce((s: number, c: any) => s + Number(c.amount_usd || 0), 0);
+          const totalIqd = Math.round(totalUsd * fxRate);
+          const vendor = vendors.find((v: any) => v.id === vendorId);
+          const dueDays = vendor?.payment_terms_days || 30;
+          const billNo = `BILL-${year}-${String(billIdx).padStart(4, '0')}`;
+          const { error } = await (supabase.from('vendor_bills') as any).insert({
+            bill_no: billNo,
+            order_id: order.id,
+            vendor_id: vendorId,
+            status: 'issued',
+            amount_usd: totalUsd,
+            amount_iqd: totalIqd,
+            fx_rate: fxRate,
+            fx_date: today,
+            is_fx_locked: true,
+            issued_date: today,
+            due_date: new Date(Date.now() + dueDays * 86400000).toISOString().split('T')[0],
+          });
+          if (!error) created++;
+        }
+        if (created > 0) {
+          queryClient.invalidateQueries({ queryKey: ['vendor_bills'] });
+          toast.success(`${created} vendor bill(s) auto-generated`);
+        }
+      } catch (err: any) {
+        toast.error(`Auto-generate bills failed: ${err.message}`);
+      } finally {
+        setAutoGeneratingBills(false);
+      }
+    };
+
+    autoGen();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vendorCosts.length, vendorBills.length, quotation?.id]);
 
   const addManualBillLineItem = () => setManualBillLineItems(prev => [...prev, { description: '', qty: 1, unit: 'Service', unitCost: 0 }]);
   const removeManualBillLineItem = (idx: number) => setManualBillLineItems(prev => prev.filter((_, i) => i !== idx));
@@ -1818,10 +1886,29 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
         <div className="flex items-center gap-2 border-b border-border pb-2">
           <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center"><span className="text-sm font-bold text-amber-700">AP</span></div>
           <h4 className="text-base font-semibold">Accounts Payable — Vendor Bills</h4>
+          {autoGeneratingBills && (
+            <span className="text-xs text-amber-600 animate-pulse ml-2">⏳ Auto-generating bills…</span>
+          )}
         </div>
 
-        {/* Bill Generation - Auto from costs (only if no bills yet and vendor costs exist) */}
-        {!hasBills && vendorCosts.length > 0 && (
+        {/* Auto-generating skeleton */}
+        {autoGeneratingBills && (
+          <div className="space-y-2">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        )}
+
+        {/* No costs warning */}
+        {!autoGeneratingBills && vendorCosts.length === 0 && (
+          <div className="flex items-center gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm">
+            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+            <p className="text-amber-800">No vendor costs found. Go to <strong>Step 3</strong> and add vendor costs first.</p>
+          </div>
+        )}
+
+        {/* Bill Generation - Manual fallback (only if no bills yet, costs exist, not auto-generating) */}
+        {!hasBills && !autoGeneratingBills && vendorCosts.length > 0 && (
           <div className="space-y-4 p-4 bg-muted/30 rounded-lg border border-border">
             <p className="text-sm font-semibold">📝 Auto-Generate Vendor Bills from Order Costs</p>
             <p className="text-xs text-muted-foreground">Bills are generated per vendor from the cost sheet. Broker commissions and employee incentives are NOT included.</p>
