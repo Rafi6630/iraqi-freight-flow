@@ -8,6 +8,8 @@ import { useState, useMemo } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { DEFAULT_FX_RATE } from '@/lib/currency';
 import { PerformanceReport } from '@/components/reports/PerformanceReport';
+import { PartnerReport } from '@/components/reports/PartnerReport';
+import { YearlyReport } from '@/components/reports/YearlyReport';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
