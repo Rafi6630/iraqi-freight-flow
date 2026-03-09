@@ -62,7 +62,6 @@ export default function ReportsPage() {
   // Profitability data — use order_costs (vendor costs) not vendorBills for COGS
   const profitData = useMemo(() => {
     const totalRevenue = filteredInvoices.reduce((s: number, i: any) => s + (i.amount_usd || 0), 0);
-    // Use both vendor bills and order_costs for most accurate COGS
     const totalCogs = filteredBills.reduce((s: number, b: any) => s + (b.amount_usd || 0), 0) ||
       filteredOrderCosts.filter((c: any) => c.category !== 'partner_commission' && c.category !== 'employee_incentive')
         .reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
@@ -70,10 +69,21 @@ export default function ReportsPage() {
       .filter((c: any) => c.category === 'partner_commission' || c.category === 'employee_incentive')
       .reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
     const totalExpenses = filteredExpenses.reduce((s: number, e: any) => s + (e.amount_usd || 0), 0);
+    // Payment fees — bank/transfer charges from all payments
+    const totalPaymentFees = filteredPayments.reduce((s: number, p: any) => s + (p.payment_fee_usd || 0), 0);
+    // FX Gain/Loss from payments
+    const fxGainLoss = filteredPayments.reduce((s: number, p: any) => s + (p.fx_gain_loss_usd || 0), 0);
     const grossProfit = totalRevenue - totalCogs;
-    const netProfit = grossProfit - totalCommissions - totalExpenses;
-    return { totalRevenue, totalCogs, totalCommissions, totalExpenses, grossProfit, netProfit };
-  }, [filteredInvoices, filteredBills, filteredOrderCosts, filteredExpenses]);
+    const netProfit = grossProfit - totalCommissions - totalExpenses - totalPaymentFees + fxGainLoss;
+    const margin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+    // Expense breakdown by category
+    const expenseByCategory = filteredExpenses.reduce((acc: Record<string, number>, e: any) => {
+      const cat = e.category || 'Uncategorized';
+      acc[cat] = (acc[cat] || 0) + (e.amount_usd || 0);
+      return acc;
+    }, {} as Record<string, number>);
+    return { totalRevenue, totalCogs, totalCommissions, totalExpenses, totalPaymentFees, fxGainLoss, grossProfit, netProfit, margin, expenseByCategory };
+  }, [filteredInvoices, filteredBills, filteredOrderCosts, filteredExpenses, filteredPayments]);
 
   // AR Aging — only unpaid invoices in date range
   const arAging = useMemo(() => {
@@ -184,18 +194,20 @@ export default function ReportsPage() {
                 {/* Profitability */}
                 {selectedReport === 'profitability' && (
                   <div className="space-y-4">
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       {[
-                        { label: 'Revenue', val: profitData.totalRevenue, color: 'text-green-600' },
-                        { label: 'Vendor Costs (COGS)', val: profitData.totalCogs, color: 'text-red-500' },
-                        { label: 'Gross Profit', val: profitData.grossProfit, color: profitData.grossProfit >= 0 ? 'text-emerald-600' : 'text-red-600' },
-                        { label: 'Commissions', val: profitData.totalCommissions, color: 'text-amber-600' },
-                        { label: 'Operating Expenses', val: profitData.totalExpenses, color: 'text-orange-600' },
-                        { label: 'Net Profit', val: profitData.netProfit, color: profitData.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700' },
+                        { label: 'Revenue', val: profitData.totalRevenue, color: 'text-green-600', icon: '💰' },
+                        { label: 'Vendor Costs (COGS)', val: profitData.totalCogs, color: 'text-red-500', icon: '📦' },
+                        { label: 'Gross Profit', val: profitData.grossProfit, color: profitData.grossProfit >= 0 ? 'text-emerald-600' : 'text-red-600', icon: '📊' },
+                        { label: 'Commissions', val: profitData.totalCommissions, color: 'text-amber-600', icon: '🤝' },
+                        { label: 'Operating Expenses', val: profitData.totalExpenses, color: 'text-orange-600', icon: '🏢' },
+                        { label: 'Payment Fees', val: profitData.totalPaymentFees, color: 'text-slate-600', icon: '🏦' },
+                        { label: 'FX Gain / Loss', val: profitData.fxGainLoss, color: profitData.fxGainLoss >= 0 ? 'text-emerald-600' : 'text-red-500', icon: '💱' },
+                        { label: 'Net Profit', val: profitData.netProfit, color: profitData.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700', icon: '🏆' },
                       ].map(m => (
-                        <div key={m.label} className="p-4 rounded-lg bg-muted/50">
-                          <p className="text-xs text-muted-foreground mb-1">{m.label}</p>
-                          <p className={`text-lg font-bold font-mono ${m.color}`}>${m.val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                        <div key={m.label} className={`p-4 rounded-lg ${m.label === 'Net Profit' || m.label === 'Gross Profit' ? 'bg-primary/10 ring-1 ring-primary/20' : 'bg-muted/50'}`}>
+                          <p className="text-xs text-muted-foreground mb-1">{m.icon} {m.label}</p>
+                          <p className={`text-lg font-bold font-mono ${m.color}`}>{m.val >= 0 ? '' : '-'}${Math.abs(m.val).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                           <p className="text-xs text-muted-foreground">{(m.val * DEFAULT_FX_RATE).toLocaleString()} IQD</p>
                         </div>
                       ))}
@@ -325,19 +337,43 @@ export default function ReportsPage() {
                 {selectedReport === 'monthly-pl' && (
                   <div className="space-y-2">
                     {[
-                      { label: 'Revenue', val: profitData.totalRevenue },
-                      { label: '(-) Vendor Costs (COGS)', val: -profitData.totalCogs },
-                      { label: '= Gross Profit', val: profitData.grossProfit },
-                      { label: '(-) Partner & Employee Commissions', val: -profitData.totalCommissions },
-                      { label: '(-) Operating Expenses', val: -profitData.totalExpenses },
-                      { label: '(+/-) FX Gain/Loss', val: fxData.net },
-                      { label: '= Net Profit', val: profitData.netProfit + fxData.net },
+                      { label: '💰 Revenue (Invoices)', val: profitData.totalRevenue, indent: false, bold: false, positive: true },
+                      { label: '  (−) Vendor Costs (COGS)', val: -profitData.totalCogs, indent: true, bold: false, positive: false },
+                      { label: '= Gross Profit', val: profitData.grossProfit, indent: false, bold: true, positive: profitData.grossProfit >= 0 },
+                      { label: '  (−) Partner Commissions', val: -profitData.totalCommissions, indent: true, bold: false, positive: false },
+                      { label: '  (−) Operating Expenses', val: -profitData.totalExpenses, indent: true, bold: false, positive: false },
+                      { label: '  (−) Payment / Bank Fees', val: -profitData.totalPaymentFees, indent: true, bold: false, positive: false },
+                      { label: '  (+/−) FX Gain / Loss', val: fxData.net, indent: true, bold: false, positive: fxData.net >= 0 },
+                      { label: '= Net Profit', val: profitData.netProfit, indent: false, bold: true, positive: profitData.netProfit >= 0 },
                     ].map(row => (
-                      <div key={row.label} className={`flex justify-between items-center p-3 rounded-lg ${row.label.startsWith('=') ? 'bg-primary/10 font-bold' : 'bg-muted/30'}`}>
-                        <span className="text-sm">{row.label}</span>
-                        <CurrencyDisplay usd={row.val} iqd={row.val * DEFAULT_FX_RATE} size="sm" />
+                      <div key={row.label} className={`flex justify-between items-center p-3 rounded-lg ${row.bold ? 'bg-primary/10 ring-1 ring-primary/20' : 'bg-muted/30'} ${row.indent ? 'ml-4' : ''}`}>
+                        <span className={`text-sm ${row.bold ? 'font-bold' : ''} ${row.indent ? 'text-muted-foreground' : ''}`}>{row.label}</span>
+                        <div className="text-right">
+                          <p className={`font-mono text-sm ${row.bold ? 'font-bold text-base' : ''} ${row.positive ? 'text-emerald-600' : 'text-red-500'}`}>
+                            {row.val >= 0 ? '+' : ''}${row.val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </p>
+                          <p className="text-xs text-muted-foreground">{(row.val * DEFAULT_FX_RATE).toLocaleString()} IQD</p>
+                        </div>
                       </div>
                     ))}
+                    {/* Expense breakdown */}
+                    {Object.keys(profitData.expenseByCategory).length > 0 && (
+                      <div className="mt-4 p-3 bg-muted/20 rounded-lg border border-border">
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">🏢 Expense Breakdown by Category</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          {Object.entries(profitData.expenseByCategory).map(([cat, amt]: any) => (
+                            <div key={cat} className="flex justify-between items-center text-sm">
+                              <span className="text-muted-foreground">{cat}</span>
+                              <span className="font-mono text-orange-600">${amt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div className="p-3 bg-muted/20 rounded-lg border border-border text-xs text-muted-foreground">
+                      <p className="font-medium mb-1">Period: {dateFrom} → {dateTo}</p>
+                      <p>Net Margin: <span className={`font-bold ${profitData.margin >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{profitData.margin.toFixed(1)}%</span></p>
+                    </div>
                   </div>
                 )}
 
