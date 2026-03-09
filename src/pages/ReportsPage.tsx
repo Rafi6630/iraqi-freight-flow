@@ -335,48 +335,43 @@ export default function ReportsPage() {
 
                 {/* Monthly P&L */}
                 {selectedReport === 'monthly-pl' && (() => {
-                  // Build month-by-month rows for the selected year range
-                  const monthRows: any[] = [];
-                  const startYear  = parseInt(dateFrom.slice(0, 4));
-                  const startMonth = parseInt(dateFrom.slice(5, 7));
-                  const endYear    = parseInt(dateTo.slice(0, 4));
-                  const endMonth   = parseInt(dateTo.slice(5, 7));
+                  // Collect ALL unique YYYY-MM keys from every data source
+                  const allMonthKeys = new Set<string>();
+                  invoices.forEach((i: any)    => { const d = i.issued_date;  if (d) allMonthKeys.add(d.slice(0, 7)); });
+                  vendorBills.forEach((b: any) => { const d = b.issued_date;  if (d) allMonthKeys.add(d.slice(0, 7)); });
+                  expenses.forEach((e: any)    => { const d = e.date;         if (d) allMonthKeys.add(d.slice(0, 7)); });
+                  orderCosts.forEach((c: any)  => { const d = c.created_at;   if (d) allMonthKeys.add(d.slice(0, 7)); });
+                  payments.forEach((p: any)    => { const d = p.date;         if (d) allMonthKeys.add(d.slice(0, 7)); });
 
-                  for (let y = startYear; y <= endYear; y++) {
-                    const mStart = y === startYear ? startMonth : 1;
-                    const mEnd   = y === endYear   ? endMonth   : 12;
-                    for (let m = mStart; m <= mEnd; m++) {
-                      const key = `${y}-${String(m).padStart(2, '0')}`;
-                      const label = new Date(y, m - 1).toLocaleString('en', { month: 'short', year: '2-digit' });
+                  const monthRows: any[] = [...allMonthKeys].sort().map(key => {
+                    const [y, m] = key.split('-').map(Number);
+                    const label = new Date(y, m - 1).toLocaleString('en', { month: 'short', year: '2-digit' });
 
-                      const revenue     = invoices.filter((i: any) => (i.issued_date || '').startsWith(key))
-                                            .reduce((s: number, i: any) => s + (i.amount_usd || 0), 0);
-                      const cogs        = (vendorBills.filter((b: any) => (b.issued_date || '').startsWith(key))
-                                            .reduce((s: number, b: any) => s + (b.amount_usd || 0), 0))
-                                          || orderCosts.filter((c: any) =>
-                                              (c.created_at || '').startsWith(key) &&
-                                              c.category !== 'partner_commission' && c.category !== 'employee_incentive')
-                                            .reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
-                      const commissions = orderCosts.filter((c: any) =>
+                    const revenue     = invoices.filter((i: any) => (i.issued_date || '').startsWith(key))
+                                          .reduce((s: number, i: any) => s + (i.amount_usd || 0), 0);
+                    const cogsBills   = vendorBills.filter((b: any) => (b.issued_date || '').startsWith(key))
+                                          .reduce((s: number, b: any) => s + (b.amount_usd || 0), 0);
+                    const cogsCosts   = orderCosts.filter((c: any) =>
+                                            (c.created_at || '').startsWith(key) &&
+                                            c.category !== 'partner_commission' && c.category !== 'employee_incentive')
+                                          .reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
+                    const cogs        = cogsBills || cogsCosts;
+                    const commissions = orderCosts.filter((c: any) =>
                                             (c.created_at || '').startsWith(key) &&
                                             (c.category === 'partner_commission' || c.category === 'employee_incentive'))
-                                            .reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
-                      // Expenses = entries from the expenses table (not order costs)
-                      const expensesAmt = expenses.filter((e: any) => (e.date || '').startsWith(key))
-                                            .reduce((s: number, e: any) => s + (e.amount_usd || 0), 0);
-                      const payFees     = payments.filter((p: any) => (p.date || '').startsWith(key))
-                                            .reduce((s: number, p: any) => s + (p.payment_fee_usd || 0), 0);
-                      const fxGL        = payments.filter((p: any) => (p.date || '').startsWith(key))
-                                            .reduce((s: number, p: any) => s + (p.fx_gain_loss_usd || 0), 0);
-                      const grossProfit = revenue - cogs;
-                      const netProfit   = grossProfit - commissions - expensesAmt - payFees + fxGL;
+                                          .reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
+                    // ← KEY FIX: read from full `expenses` array, not date-filtered subset
+                    const expensesAmt = expenses.filter((e: any) => (e.date || '').startsWith(key))
+                                          .reduce((s: number, e: any) => s + (e.amount_usd || 0), 0);
+                    const payFees     = payments.filter((p: any) => (p.date || '').startsWith(key))
+                                          .reduce((s: number, p: any) => s + (p.payment_fee_usd || 0), 0);
+                    const fxGL        = payments.filter((p: any) => (p.date || '').startsWith(key))
+                                          .reduce((s: number, p: any) => s + (p.fx_gain_loss_usd || 0), 0);
+                    const grossProfit = revenue - cogs;
+                    const netProfit   = grossProfit - commissions - expensesAmt - payFees + fxGL;
 
-                      // Only include months that have any activity
-                      if (revenue || cogs || commissions || expensesAmt || payFees) {
-                        monthRows.push({ key, label, revenue, cogs, grossProfit, commissions, expensesAmt, payFees, fxGL, netProfit });
-                      }
-                    }
-                  }
+                    return { key, label, revenue, cogs, grossProfit, commissions, expensesAmt, payFees, fxGL, netProfit };
+                  }).filter(r => r.revenue || r.cogs || r.commissions || r.expensesAmt || r.payFees);
 
                   // Period totals
                   const tot = monthRows.reduce((acc, r) => ({
@@ -389,8 +384,8 @@ export default function ReportsPage() {
                   const fmtC = (n: number) => n === 0 ? '—'
                     : `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
-                  // Expense detail for the selected period (from expenses table)
-                  const expByCategory = filteredExpenses.reduce((acc: Record<string, number>, e: any) => {
+                  // Expense breakdown by category — from full expenses array (all time)
+                  const expByCategory = expenses.reduce((acc: Record<string, number>, e: any) => {
                     const cat = e.category || 'Uncategorized';
                     acc[cat] = (acc[cat] || 0) + (e.amount_usd || 0);
                     return acc;
