@@ -21,7 +21,6 @@ import PaymentsPage from "./pages/PaymentsPage";
 import CommissionsPage from "./pages/CommissionsPage";
 import ExpensesPage from "./pages/ExpensesPage";
 import MonthlyClosePage from "./pages/MonthlyClosePage";
-import ExchangeOfficesPage from "./pages/ExchangeOfficesPage";
 import PaymentRemindersPage from "./pages/PaymentRemindersPage";
 import DocumentHubPage from "./pages/DocumentHubPage";
 import ReportsPage from "./pages/ReportsPage";
@@ -64,7 +63,6 @@ function ProtectedRoutes() {
         <Route path="/commissions" element={<CommissionsPage />} />
         <Route path="/expenses" element={<ExpensesPage />} />
         <Route path="/monthly-close" element={<MonthlyClosePage />} />
-        <Route path="/exchange-offices" element={<ExchangeOfficesPage />} />
         <Route path="/payment-reminders" element={<PaymentRemindersPage />} />
         <Route path="/document-hub" element={<DocumentHubPage />} />
         <Route path="/reports" element={<ReportsPage />} />
