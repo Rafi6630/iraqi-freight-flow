@@ -6,16 +6,18 @@ interface AuthContextValue {
   session: Session | null;
   user: User | null;
   loading: boolean;
+  isAdmin: boolean;
   signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue>({
-  session: null, user: null, loading: true, signOut: async () => {},
+  session: null, user: null, loading: true, isAdmin: false, signOut: async () => {},
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -31,12 +33,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Check admin role when user changes
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId) {
+      setIsAdmin(false);
+      return;
+    }
+    supabase.rpc('has_role', { _user_id: userId, _role: 'admin' })
+      .then(({ data }) => setIsAdmin(!!data));
+  }, [session?.user?.id]);
+
   const signOut = async () => {
     await supabase.auth.signOut();
   };
 
   return (
-    <AuthContext.Provider value={{ session, user: session?.user ?? null, loading, signOut }}>
+    <AuthContext.Provider value={{ session, user: session?.user ?? null, loading, isAdmin, signOut }}>
       {children}
     </AuthContext.Provider>
   );
