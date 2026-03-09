@@ -2628,12 +2628,19 @@ function Step9({ order, costs, invoices, vendorBills, payments, employees, partn
       {/* Close Order Action */}
       <div className="p-4 rounded-lg border border-border bg-muted/20 space-y-3">
         {isLocked ? (
-          <div className="flex items-center gap-3 text-sm">
-            <Lock className="w-5 h-5 text-amber-500" />
-            <div>
-              <p className="font-semibold text-foreground">✅ Order Closed</p>
-              <p className="text-muted-foreground">Closed on {order.closed_at?.split('T')[0]}. This order is locked from further modifications.</p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 text-sm">
+              <Lock className="w-5 h-5 text-amber-500" />
+              <div>
+                <p className="font-semibold text-foreground">✅ Order Closed</p>
+                <p className="text-muted-foreground">Closed on {order.closed_at?.split('T')[0]}. This order is locked from further modifications.</p>
+              </div>
             </div>
+            {isAdmin && (
+              <Button variant="outline" size="sm" onClick={handleUnlockOrder}>
+                <LockOpen className="w-4 h-4 mr-1" />Unlock Order
+              </Button>
+            )}
           </div>
         ) : (
           <>
