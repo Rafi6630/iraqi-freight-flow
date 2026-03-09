@@ -27,6 +27,9 @@ export default function ExpensesPage() {
     (e.description || '').toLowerCase().includes(search.toLowerCase())
   );
 
+  const totalUSD = filtered.reduce((s: number, e: any) => s + (e.amount_usd || 0), 0);
+  const totalIQD = filtered.reduce((s: number, e: any) => s + (e.amount_iqd || 0), 0);
+
   const setField = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }));
   const fxRate = DEFAULT_FX_RATE;
   const dual = calculateDualAmount(form.amount, form.currency_input as any, fxRate, form.date);
@@ -99,6 +102,24 @@ export default function ExpensesPage() {
                   </tr>
                 ))}
               </tbody>
+              {filtered.length > 0 && (
+                <tfoot>
+                  <tr className="border-t-2 border-border bg-muted/50">
+                    <td colSpan={3} className="px-5 py-3 font-bold text-sm">
+                      TOTAL ({filtered.length} {filtered.length === 1 ? 'expense' : 'expenses'})
+                    </td>
+                    <td className="px-5 py-3 text-right">
+                      <p className="font-mono font-bold text-sm text-orange-600">
+                        ${totalUSD.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
+                      <p className="font-mono text-xs text-muted-foreground">
+                        {totalIQD.toLocaleString(undefined, { maximumFractionDigits: 0 })} IQD
+                      </p>
+                    </td>
+                    <td colSpan={3} />
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </div>
