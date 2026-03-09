@@ -94,16 +94,16 @@ export default function OrdersPage() {
     try {
       const orderId = deleteTarget.id;
       const step = deleteTarget.status_step || 1;
+      const isClosed = !!deleteTarget.closed_at;
 
-      if (step >= 7) {
-        // Order reached step 7+: keep order record, delete related financial data
-        // Delete commissions, invoices, vendor_bills, payments, order_costs for this order
+      if (step >= 7 || isClosed) {
+        // Orders that reached Step 7+ or were closed: NEVER delete the record.
+        // Only clear financial/operational data (once). Keep the order row and its status.
         await (supabase.from('payments') as any).delete().eq('order_id', orderId);
         await (supabase.from('commissions') as any).delete().eq('order_id', orderId);
         await (supabase.from('invoices') as any).delete().eq('order_id', orderId);
         await (supabase.from('vendor_bills') as any).delete().eq('order_id', orderId);
 
-        // Delete quotation services and payment terms for order quotations
         const { data: orderQuotations } = await (supabase.from('quotations') as any).select('id').eq('order_id', orderId);
         if (orderQuotations?.length) {
           for (const q of orderQuotations) {
@@ -114,18 +114,10 @@ export default function OrdersPage() {
         await (supabase.from('quotations') as any).delete().eq('order_id', orderId);
         await (supabase.from('order_costs') as any).delete().eq('order_id', orderId);
 
-        // Reset order to step 1 and clear fields
-        await (supabase.from('orders') as any).update({
-          status_step: 1, closed_at: null,
-          cargo_desc: null, weight: null, volume: null, packages: null,
-          container_type: null, container_number: null, seal_number: null,
-          carrier_name: null, carrier_type: null, etd: null, eta: null,
-          incoterm: null, equipment_size: null, notes: null,
-        }).eq('id', orderId);
-
-        toast.success('Order data cleared. Order record kept (was past step 7).');
+        // Keep the order record — do NOT reset status_step or clear closed_at
+        toast.success(`Order ${deleteTarget.order_no}: financial data cleared. Order record kept.`);
       } else {
-        // Order before step 7: delete everything including order record
+        // Orders before Step 7 that were never closed: delete everything including order record
         await (supabase.from('payments') as any).delete().eq('order_id', orderId);
         await (supabase.from('commissions') as any).delete().eq('order_id', orderId);
         await (supabase.from('invoices') as any).delete().eq('order_id', orderId);
@@ -149,7 +141,6 @@ export default function OrdersPage() {
     } finally {
       setDeleting(false);
       setDeleteTarget(null);
-      // Refresh
       window.location.reload();
     }
   };
@@ -221,9 +212,9 @@ export default function OrdersPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Order {deleteTarget?.order_no}?</AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteTarget?.status_step >= 7
-                ? 'This order reached Step 7+. The order record will be kept, but all financial data (invoices, bills, commissions, incentives, costs, quotations, payments) will be permanently deleted and the order will be reset.'
-                : 'This order is before Step 7. The order and ALL related data (costs, quotations, invoices, bills, payments) will be permanently deleted.'}
+              {(deleteTarget?.status_step >= 7 || deleteTarget?.closed_at)
+                ? 'This order reached Step 7 or was closed. The order record will be permanently kept in the list, but all financial data (invoices, bills, costs, quotations, payments) will be cleared. This cannot be undone.'
+                : 'This order has not reached Step 7. The order and ALL related data will be permanently deleted from the system.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
