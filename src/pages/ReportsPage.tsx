@@ -325,7 +325,12 @@ export default function ReportsPage() {
                 )}
 
                 {/* Placeholder for other reports */}
-                {['partner', 'performance', 'yearly'].includes(selectedReport) && (
+                {selectedReport === 'performance' && (
+                  <PerformanceReport dateFrom={dateFrom} dateTo={dateTo} />
+                )}
+
+                {/* Placeholder for other reports */}
+                {['partner', 'yearly'].includes(selectedReport) && (
                   <p className="text-muted-foreground py-8 text-center">Add data to generate this report. Create orders, invoices, and payments to see metrics here.</p>
                 )}
               </>
