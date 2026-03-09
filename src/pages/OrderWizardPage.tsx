@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Check, ChevronRight, Lock, Plus, Trash2, FileDown, Eye, Send, Upload, Printer, RefreshCw, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, Lock, LockOpen, Plus, Trash2, FileDown, Eye, Send, Upload, Printer, RefreshCw, AlertTriangle } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -2437,6 +2438,7 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers }: any) {
 }
 
 function Step9({ order, costs, invoices, vendorBills, payments, employees, partners, onSave }: any) {
+  const { isAdmin } = useAuth();
   const insertCommission = useInsertMutation('commissions');
   const { data: commissions = [] } = useTableQuery<any>('commissions', { filter: { order_id: order.id } });
 
@@ -2516,6 +2518,11 @@ function Step9({ order, costs, invoices, vendorBills, payments, employees, partn
     }
     await onSave({ status_step: 9, closed_at: new Date().toISOString() });
     toast.success('Order closed and locked');
+  };
+
+  const handleUnlockOrder = async () => {
+    await onSave({ closed_at: null });
+    toast.success('Order unlocked — you can now edit all steps');
   };
 
   return (
@@ -2621,12 +2628,19 @@ function Step9({ order, costs, invoices, vendorBills, payments, employees, partn
       {/* Close Order Action */}
       <div className="p-4 rounded-lg border border-border bg-muted/20 space-y-3">
         {isLocked ? (
-          <div className="flex items-center gap-3 text-sm">
-            <Lock className="w-5 h-5 text-amber-500" />
-            <div>
-              <p className="font-semibold text-foreground">✅ Order Closed</p>
-              <p className="text-muted-foreground">Closed on {order.closed_at?.split('T')[0]}. This order is locked from further modifications.</p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 text-sm">
+              <Lock className="w-5 h-5 text-amber-500" />
+              <div>
+                <p className="font-semibold text-foreground">✅ Order Closed</p>
+                <p className="text-muted-foreground">Closed on {order.closed_at?.split('T')[0]}. This order is locked from further modifications.</p>
+              </div>
             </div>
+            {isAdmin && (
+              <Button variant="outline" size="sm" onClick={handleUnlockOrder}>
+                <LockOpen className="w-4 h-4 mr-1" />Unlock Order
+              </Button>
+            )}
           </div>
         ) : (
           <>
