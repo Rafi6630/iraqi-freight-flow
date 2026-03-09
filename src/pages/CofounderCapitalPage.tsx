@@ -1,10 +1,10 @@
-import { Landmark, Plus, Trash2 } from 'lucide-react';
+import { Landmark, Plus, Trash2, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { CurrencyDisplay } from '@/components/CurrencyDisplay';
 import { FxLockedBadge } from '@/components/FxLockedBadge';
-import { useTableQuery, useInsertMutation, useDeleteMutation } from '@/hooks/use-supabase-query';
+import { useTableQuery, useInsertMutation, useUpdateMutation, useDeleteMutation } from '@/hooks/use-supabase-query';
 import { useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -13,19 +13,39 @@ import { DEFAULT_FX_RATE, calculateDualAmount, formatUSD, formatIQD } from '@/li
 
 export default function CofounderCapitalPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState({ cofounder_name: '', amount: 0, currency_input: 'USD', contribution_date: new Date().toISOString().split('T')[0], notes: '' });
 
   const { data: items = [], isLoading } = useTableQuery<any>('cofounder_capital');
   const insertMut = useInsertMutation('cofounder_capital');
+  const updateMut = useUpdateMutation('cofounder_capital');
   const deleteMut = useDeleteMutation('cofounder_capital');
 
   const setField = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }));
   const fxRate = DEFAULT_FX_RATE;
   const dual = calculateDualAmount(form.amount, form.currency_input as any, fxRate, form.contribution_date);
 
-  const handleCreate = async () => {
+  const openCreate = () => {
+    setEditId(null);
+    setForm({ cofounder_name: '', amount: 0, currency_input: 'USD', contribution_date: new Date().toISOString().split('T')[0], notes: '' });
+    setDialogOpen(true);
+  };
+
+  const openEdit = (item: any) => {
+    setEditId(item.id);
+    setForm({
+      cofounder_name: item.cofounder_name || '',
+      amount: item.contribution_amount_usd || 0,
+      currency_input: item.currency_input || 'USD',
+      contribution_date: item.contribution_date || '',
+      notes: item.notes || '',
+    });
+    setDialogOpen(true);
+  };
+
+  const handleSave = async () => {
     if (!form.cofounder_name.trim() || form.amount <= 0) return;
-    await insertMut.mutateAsync({
+    const payload = {
       cofounder_name: form.cofounder_name,
       contribution_amount_usd: dual.amount_usd,
       contribution_amount_iqd: dual.amount_iqd,
@@ -33,8 +53,14 @@ export default function CofounderCapitalPage() {
       fx_rate: fxRate, fx_date: form.contribution_date,
       currency_input: form.currency_input, is_fx_locked: true,
       notes: form.notes,
-    });
+    };
+    if (editId) {
+      await updateMut.mutateAsync({ id: editId, ...payload });
+    } else {
+      await insertMut.mutateAsync(payload);
+    }
     setDialogOpen(false);
+    setEditId(null);
   };
 
   const totalUsd = items.reduce((s: number, i: any) => s + (i.contribution_amount_usd || 0), 0);
@@ -46,7 +72,7 @@ export default function CofounderCapitalPage() {
           <h1 className="erp-page-title flex items-center gap-2"><Landmark className="w-6 h-6 text-primary" />Co-Founder Capital</h1>
           <p className="erp-page-subtitle">Track capital contributions — USD | IQD</p>
         </div>
-        <Button onClick={() => setDialogOpen(true)}><Plus className="w-4 h-4 mr-2" />Add Contribution</Button>
+        <Button onClick={openCreate}><Plus className="w-4 h-4 mr-2" />Add Contribution</Button>
       </div>
 
       {totalUsd > 0 && (
@@ -79,13 +105,18 @@ export default function CofounderCapitalPage() {
                     <td className="px-5 py-3 text-muted-foreground">{i.contribution_date}</td>
                     <td className="px-5 py-3 text-center">{i.is_fx_locked && <FxLockedBadge />}</td>
                     <td className="px-5 py-3 text-center">
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild><Button variant="ghost" size="sm"><Trash2 className="w-4 h-4 text-destructive" /></Button></AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader><AlertDialogTitle>Delete</AlertDialogTitle><AlertDialogDescription>Delete this contribution?</AlertDialogDescription></AlertDialogHeader>
-                          <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => deleteMut.mutate(i.id)}>Delete</AlertDialogAction></AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                      <div className="flex items-center justify-center gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => openEdit(i)}>
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild><Button variant="ghost" size="sm"><Trash2 className="w-4 h-4 text-destructive" /></Button></AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader><AlertDialogTitle>Delete</AlertDialogTitle><AlertDialogDescription>Delete this contribution?</AlertDialogDescription></AlertDialogHeader>
+                            <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => deleteMut.mutate(i.id)}>Delete</AlertDialogAction></AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -95,9 +126,9 @@ export default function CofounderCapitalPage() {
         </div>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog open={dialogOpen} onOpenChange={v => { setDialogOpen(v); if (!v) setEditId(null); }}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Add Contribution</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editId ? 'Edit' : 'Add'} Contribution</DialogTitle></DialogHeader>
           <div className="grid gap-4 py-2">
             <div><Label className="text-xs">Co-Founder Name *</Label><Input value={form.cofounder_name} onChange={e => setField('cofounder_name', e.target.value)} /></div>
             <div className="grid grid-cols-2 gap-3">
@@ -111,8 +142,8 @@ export default function CofounderCapitalPage() {
             <div><Label className="text-xs">Notes</Label><Input value={form.notes} onChange={e => setField('notes', e.target.value)} /></div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleCreate} disabled={insertMut.isPending}>Create</Button>
+            <Button variant="outline" onClick={() => { setDialogOpen(false); setEditId(null); }}>Cancel</Button>
+            <Button onClick={handleSave} disabled={insertMut.isPending || updateMut.isPending}>{editId ? 'Update' : 'Create'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

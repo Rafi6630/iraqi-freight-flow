@@ -1,15 +1,18 @@
-import { Package, Plus, Search } from 'lucide-react';
+import { Package, Plus, Search, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { StatusBadge } from '@/components/StatusBadge';
 import { CurrencyDisplay } from '@/components/CurrencyDisplay';
-import { useTableQuery, useInsertMutation } from '@/hooks/use-supabase-query';
-import { useState, useMemo } from 'react';
+import { useTableQuery, useInsertMutation, useDeleteMutation } from '@/hooks/use-supabase-query';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 
 const countryCityMap: Record<string, string[]> = {
   'Iraq': ['Baghdad', 'Basra', 'Erbil', 'Sulaymaniyah', 'Mosul', 'Najaf', 'Karbala', 'Kirkuk', 'Duhok', 'Umm Qasr'],
@@ -46,6 +49,8 @@ const stepLabels: Record<number, string> = {
 export default function OrdersPage() {
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [deleting, setDeleting] = useState(false);
   const navigate = useNavigate();
 
   const { data: orders = [], isLoading } = useTableQuery<any>('orders');
@@ -83,6 +88,72 @@ export default function OrdersPage() {
     if (result?.id) navigate(`/orders/${result.id}`);
   };
 
+  const handleDeleteOrder = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const orderId = deleteTarget.id;
+      const step = deleteTarget.status_step || 1;
+
+      if (step >= 7) {
+        // Order reached step 7+: keep order record, delete related financial data
+        // Delete commissions, invoices, vendor_bills, payments, order_costs for this order
+        await (supabase.from('payments') as any).delete().eq('order_id', orderId);
+        await (supabase.from('commissions') as any).delete().eq('order_id', orderId);
+        await (supabase.from('invoices') as any).delete().eq('order_id', orderId);
+        await (supabase.from('vendor_bills') as any).delete().eq('order_id', orderId);
+
+        // Delete quotation services and payment terms for order quotations
+        const { data: orderQuotations } = await (supabase.from('quotations') as any).select('id').eq('order_id', orderId);
+        if (orderQuotations?.length) {
+          for (const q of orderQuotations) {
+            await (supabase.from('quotation_services') as any).delete().eq('quotation_id', q.id);
+            await (supabase.from('quotation_payment_terms') as any).delete().eq('quotation_id', q.id);
+          }
+        }
+        await (supabase.from('quotations') as any).delete().eq('order_id', orderId);
+        await (supabase.from('order_costs') as any).delete().eq('order_id', orderId);
+
+        // Reset order to step 1 and clear fields
+        await (supabase.from('orders') as any).update({
+          status_step: 1, closed_at: null,
+          cargo_desc: null, weight: null, volume: null, packages: null,
+          container_type: null, container_number: null, seal_number: null,
+          carrier_name: null, carrier_type: null, etd: null, eta: null,
+          incoterm: null, equipment_size: null, notes: null,
+        }).eq('id', orderId);
+
+        toast.success('Order data cleared. Order record kept (was past step 7).');
+      } else {
+        // Order before step 7: delete everything including order record
+        await (supabase.from('payments') as any).delete().eq('order_id', orderId);
+        await (supabase.from('commissions') as any).delete().eq('order_id', orderId);
+        await (supabase.from('invoices') as any).delete().eq('order_id', orderId);
+        await (supabase.from('vendor_bills') as any).delete().eq('order_id', orderId);
+
+        const { data: orderQuotations } = await (supabase.from('quotations') as any).select('id').eq('order_id', orderId);
+        if (orderQuotations?.length) {
+          for (const q of orderQuotations) {
+            await (supabase.from('quotation_services') as any).delete().eq('quotation_id', q.id);
+            await (supabase.from('quotation_payment_terms') as any).delete().eq('quotation_id', q.id);
+          }
+        }
+        await (supabase.from('quotations') as any).delete().eq('order_id', orderId);
+        await (supabase.from('order_costs') as any).delete().eq('order_id', orderId);
+        await (supabase.from('orders') as any).delete().eq('id', orderId);
+
+        toast.success('Order and all related data deleted.');
+      }
+    } catch (err: any) {
+      toast.error(`Delete failed: ${err.message}`);
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
+      // Refresh
+      window.location.reload();
+    }
+  };
+
   return (
     <div className="erp-page">
       <div className="erp-page-header">
@@ -112,11 +183,12 @@ export default function OrdersPage() {
                   <th className="text-center px-5 py-3 font-medium text-muted-foreground">Direction</th>
                   <th className="text-center px-5 py-3 font-medium text-muted-foreground">Step</th>
                   <th className="text-left px-5 py-3 font-medium text-muted-foreground">ETD / ETA</th>
+                  <th className="text-center px-5 py-3 font-medium text-muted-foreground">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={6} className="px-5 py-8 text-center text-muted-foreground">No orders yet. Click "New Order" to create one.</td></tr>
+                  <tr><td colSpan={7} className="px-5 py-8 text-center text-muted-foreground">No orders yet. Click "New Order" to create one.</td></tr>
                 ) : filtered.map((o: any) => (
                   <tr key={o.id} className="border-b border-border hover:bg-muted/30 transition-colors cursor-pointer" onClick={() => navigate(`/orders/${o.id}`)}>
                     <td className="px-5 py-3 font-mono font-medium text-primary">{o.order_no}</td>
@@ -130,6 +202,11 @@ export default function OrdersPage() {
                       </div>
                     </td>
                     <td className="px-5 py-3 text-xs text-muted-foreground">{o.etd || '—'} → {o.eta || '—'}</td>
+                    <td className="px-5 py-3 text-center" onClick={e => e.stopPropagation()}>
+                      <Button variant="ghost" size="sm" onClick={() => setDeleteTarget(o)}>
+                        <Trash2 className="w-4 h-4 text-destructive" />
+                      </Button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -137,6 +214,26 @@ export default function OrdersPage() {
           </div>
         </div>
       )}
+
+      {/* Delete Confirmation */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={v => !v && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Order {deleteTarget?.order_no}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget?.status_step >= 7
+                ? 'This order reached Step 7+. The order record will be kept, but all financial data (invoices, bills, commissions, incentives, costs, quotations, payments) will be permanently deleted and the order will be reset.'
+                : 'This order is before Step 7. The order and ALL related data (costs, quotations, invoices, bills, payments) will be permanently deleted.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteOrder} disabled={deleting}>
+              {deleting ? 'Deleting...' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* New Order Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
