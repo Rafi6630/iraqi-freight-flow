@@ -2520,6 +2520,11 @@ function Step9({ order, costs, invoices, vendorBills, payments, employees, partn
     toast.success('Order closed and locked');
   };
 
+  const handleUnlockOrder = async () => {
+    await onSave({ closed_at: null });
+    toast.success('Order unlocked — you can now edit all steps');
+  };
+
   return (
     <div className="space-y-6">
       <h3 className="text-lg font-semibold flex items-center gap-2">
