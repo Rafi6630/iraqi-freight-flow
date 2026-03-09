@@ -1,7 +1,7 @@
 import {
   LayoutDashboard, Users, Truck, UserCheck, Handshake, Landmark,
   Package, FileText, Receipt, CreditCard, Percent, DollarSign,
-  CalendarCheck, ArrowLeftRight, Bell, FolderOpen, BarChart3,
+  CalendarCheck, Bell, FolderOpen, BarChart3,
   Settings, ShieldCheck, ClipboardList,
 } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
@@ -50,7 +50,6 @@ const navGroups = [
   {
     label: 'Tools',
     items: [
-      { title: 'Exchange Offices', url: '/exchange-offices', icon: ArrowLeftRight },
       { title: 'Payment Reminders', url: '/payment-reminders', icon: Bell },
       { title: 'Document Hub', url: '/document-hub', icon: FolderOpen },
     ],
