@@ -28,7 +28,7 @@ export function useTableQuery<T = any>(table: string, options?: {
   });
 }
 
-export function useInsertMutation(table: string) {
+export function useInsertMutation(table: string, options?: { silent?: boolean }) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (record: Record<string, any>) => {
@@ -38,7 +38,7 @@ export function useInsertMutation(table: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [table] });
-      toast.success('Record created successfully');
+      if (!options?.silent) toast.success('Record created successfully');
     },
     onError: (error: any) => {
       toast.error(`Failed to create: ${error.message}`);
@@ -46,7 +46,7 @@ export function useInsertMutation(table: string) {
   });
 }
 
-export function useUpdateMutation(table: string) {
+export function useUpdateMutation(table: string, options?: { silent?: boolean }) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...updates }: Record<string, any> & { id: string }) => {
@@ -56,7 +56,7 @@ export function useUpdateMutation(table: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [table] });
-      toast.success('Record updated successfully');
+      if (!options?.silent) toast.success('Record updated successfully');
     },
     onError: (error: any) => {
       toast.error(`Failed to update: ${error.message}`);
@@ -64,7 +64,7 @@ export function useUpdateMutation(table: string) {
   });
 }
 
-export function useDeleteMutation(table: string) {
+export function useDeleteMutation(table: string, options?: { silent?: boolean }) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
@@ -73,7 +73,7 @@ export function useDeleteMutation(table: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [table] });
-      toast.success('Record deleted successfully');
+      if (!options?.silent) toast.success('Record deleted successfully');
     },
     onError: (error: any) => {
       toast.error(`Failed to delete: ${error.message}`);
