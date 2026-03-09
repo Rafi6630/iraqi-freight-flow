@@ -189,30 +189,33 @@ export default function OrderWizardPage() {
 
       {/* Step Content */}
       <div className="erp-metric-card min-h-[400px] relative">
-        {/* Locked overlay for Steps 1-8 when order is closed */}
-        {order.closed_at && currentStep < 9 && (
-          <div className="absolute inset-0 z-10 bg-background/80 backdrop-blur-sm rounded-lg flex items-center justify-center">
-            <div className="flex flex-col items-center gap-2 text-center p-6">
-              <Lock className="w-8 h-8 text-amber-500" />
-              <p className="font-semibold text-foreground">Order Locked</p>
-              <p className="text-sm text-muted-foreground max-w-sm">This order was closed on {order.closed_at?.split('T')[0]}. No further modifications are allowed.</p>
+        {/* Read-only banner when order is locked — content still visible */}
+        {order.closed_at && (
+          <div className="flex items-center gap-3 mb-4 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg">
+            <Lock className="w-5 h-5 text-amber-600 shrink-0" />
+            <div>
+              <p className="text-sm font-semibold text-amber-800">Order Locked — Read-Only View</p>
+              <p className="text-xs text-amber-700">Closed on {order.closed_at?.split('T')[0]}. You can review all data but no modifications are allowed.</p>
             </div>
           </div>
         )}
-        {currentStep === 1 && <Step1 order={order} customers={customers} employees={employees} onSave={saveOrderField} />}
-        {currentStep === 2 && <Step2 order={order} onSave={saveOrderField} />}
-        {currentStep === 3 && <Step3 orderId={order.id} costs={costs} vendors={vendors} partners={partners} employees={employees} order={order} insertCost={insertCost} deleteCost={deleteCost} />}
-        {currentStep === 4 && <Step4 order={order} costs={costs} quotations={quotations} insertQuotation={insertQuotation} customerName={customerName} customers={customers} partners={partners} employees={employees} quotationTemplates={quotationTemplates} companySettings={companySettings} />}
-        {currentStep === 5 && <Step5 quotations={quotations} />}
-        {currentStep === 6 && <Step6 order={order} onSave={saveOrderField} />}
-        {currentStep === 7 && <Step7 order={order} quotations={quotations} costs={costs} invoices={invoices} vendorBills={vendorBills} insertInvoice={insertInvoice} insertBill={insertBill} customerName={customerName} vendors={vendors} payments={payments} customers={customers} employees={employees} partners={partners} companySettings={companySettings} />}
-        {currentStep === 8 && <Step8 invoices={invoices} vendorBills={vendorBills} orderId={order.id} vendors={vendors} customers={customers} />}
+        {currentStep === 1 && <Step1 order={order} customers={customers} employees={employees} onSave={saveOrderField} readOnly={!!order.closed_at} />}
+        {currentStep === 2 && <Step2 order={order} onSave={saveOrderField} readOnly={!!order.closed_at} />}
+        {currentStep === 3 && <Step3 orderId={order.id} costs={costs} vendors={vendors} partners={partners} employees={employees} order={order} insertCost={insertCost} deleteCost={deleteCost} readOnly={!!order.closed_at} />}
+        {currentStep === 4 && <Step4 order={order} costs={costs} quotations={quotations} insertQuotation={insertQuotation} customerName={customerName} customers={customers} partners={partners} employees={employees} quotationTemplates={quotationTemplates} companySettings={companySettings} readOnly={!!order.closed_at} />}
+        {currentStep === 5 && <Step5 quotations={quotations} readOnly={!!order.closed_at} />}
+        {currentStep === 6 && <Step6 order={order} onSave={saveOrderField} readOnly={!!order.closed_at} />}
+        {currentStep === 7 && <Step7 order={order} quotations={quotations} costs={costs} invoices={invoices} vendorBills={vendorBills} insertInvoice={insertInvoice} insertBill={insertBill} customerName={customerName} vendors={vendors} payments={payments} customers={customers} employees={employees} partners={partners} companySettings={companySettings} readOnly={!!order.closed_at} />}
+        {currentStep === 8 && <Step8 invoices={invoices} vendorBills={vendorBills} orderId={order.id} vendors={vendors} customers={customers} readOnly={!!order.closed_at} />}
         {currentStep === 9 && <Step9 order={order} costs={costs} invoices={invoices} vendorBills={vendorBills} payments={payments} employees={employees} partners={partners} onSave={saveOrderField} />}
       </div>
 
       <div className="flex justify-between items-center">
         <Button variant="outline" disabled={currentStep === 1} onClick={() => setCurrentStep(s => s - 1)}>Previous</Button>
-        {currentStep === order.status_step && currentStep < 9 && (
+        {currentStep < 9 && (
+          <Button variant="outline" disabled={currentStep >= order.status_step} onClick={() => setCurrentStep(s => s + 1)}>Next</Button>
+        )}
+        {!order.closed_at && currentStep === order.status_step && currentStep < 9 && (
           <div className="flex items-center gap-3">
             {!currentValidation.canAdvance && (
               <div className="flex items-center gap-1.5 text-sm text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200">
@@ -230,90 +233,90 @@ export default function OrderWizardPage() {
   );
 }
 
-function Step1({ order, customers, employees, onSave }: any) {
+function Step1({ order, customers, employees, onSave, readOnly }: any) {
   const [form, setForm] = useState({
     customer_id: order.customer_id || '', mode: order.mode || 'sea', direction: order.direction || 'import',
     origin_country: order.origin_country || '', origin_city: order.origin_city || '',
     destination_country: order.destination_country || '', destination_city: order.destination_city || '',
     responsible_employee_id: order.responsible_employee_id || '',
   });
-  const setField = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }));
+  const setField = (k: string, v: any) => { if (!readOnly) setForm(p => ({ ...p, [k]: v })); };
 
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold">Step 1 — Order Setup</h3>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div><Label>Customer *</Label>
-          <Select value={form.customer_id} onValueChange={v => setField('customer_id', v)}>
+          <Select value={form.customer_id} onValueChange={v => setField('customer_id', v)} disabled={readOnly}>
             <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
             <SelectContent>{customers.map((c: any) => <SelectItem key={c.id} value={c.id}>{c.company}</SelectItem>)}</SelectContent>
           </Select>
         </div>
         <div><Label>Mode *</Label>
-          <Select value={form.mode} onValueChange={v => setField('mode', v)}>
+          <Select value={form.mode} onValueChange={v => setField('mode', v)} disabled={readOnly}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent><SelectItem value="sea">Sea</SelectItem><SelectItem value="air">Air</SelectItem><SelectItem value="road">Road</SelectItem><SelectItem value="rail">Rail</SelectItem></SelectContent>
           </Select>
         </div>
         <div><Label>Direction *</Label>
-          <Select value={form.direction} onValueChange={v => setField('direction', v)}>
+          <Select value={form.direction} onValueChange={v => setField('direction', v)} disabled={readOnly}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent><SelectItem value="import">Import</SelectItem><SelectItem value="export">Export</SelectItem></SelectContent>
           </Select>
         </div>
         <div><Label>Employee *</Label>
-          <Select value={form.responsible_employee_id} onValueChange={v => setField('responsible_employee_id', v)}>
+          <Select value={form.responsible_employee_id} onValueChange={v => setField('responsible_employee_id', v)} disabled={readOnly}>
             <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
             <SelectContent>{employees.map((e: any) => <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>)}</SelectContent>
           </Select>
         </div>
-        <div><Label>Origin Country *</Label><Input value={form.origin_country} onChange={e => setField('origin_country', e.target.value)} /></div>
-        <div><Label>Origin City</Label><Input value={form.origin_city} onChange={e => setField('origin_city', e.target.value)} /></div>
-        <div><Label>Dest Country *</Label><Input value={form.destination_country} onChange={e => setField('destination_country', e.target.value)} /></div>
-        <div><Label>Dest City</Label><Input value={form.destination_city} onChange={e => setField('destination_city', e.target.value)} /></div>
+        <div><Label>Origin Country *</Label><Input value={form.origin_country} onChange={e => setField('origin_country', e.target.value)} disabled={readOnly} /></div>
+        <div><Label>Origin City</Label><Input value={form.origin_city} onChange={e => setField('origin_city', e.target.value)} disabled={readOnly} /></div>
+        <div><Label>Dest Country *</Label><Input value={form.destination_country} onChange={e => setField('destination_country', e.target.value)} disabled={readOnly} /></div>
+        <div><Label>Dest City</Label><Input value={form.destination_city} onChange={e => setField('destination_city', e.target.value)} disabled={readOnly} /></div>
       </div>
-      <Button onClick={() => onSave(form)}>Save Step 1</Button>
+      {!readOnly && <Button onClick={() => onSave(form)}>Save Step 1</Button>}
     </div>
   );
 }
 
-function Step2({ order, onSave }: any) {
+function Step2({ order, onSave, readOnly }: any) {
   const [form, setForm] = useState({
     cargo_desc: order.cargo_desc || '', weight: order.weight || '', volume: order.volume || '',
     packages: order.packages || '', container_type: order.container_type || '',
     etd: order.etd || '', eta: order.eta || '', incoterm: order.incoterm || '',
   });
-  const setField = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }));
+  const setField = (k: string, v: any) => { if (!readOnly) setForm(p => ({ ...p, [k]: v })); };
 
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold">Step 2 — Shipment Details</h3>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="md:col-span-2"><Label>Cargo Description *</Label><Input value={form.cargo_desc} onChange={e => setField('cargo_desc', e.target.value)} /></div>
-        <div><Label>Weight (kg) *</Label><Input type="number" value={form.weight} onChange={e => setField('weight', e.target.value)} /></div>
-        <div><Label>Volume (CBM)</Label><Input type="number" value={form.volume} onChange={e => setField('volume', e.target.value)} /></div>
-        <div><Label>Packages</Label><Input type="number" value={form.packages} onChange={e => setField('packages', e.target.value)} /></div>
+        <div className="md:col-span-2"><Label>Cargo Description *</Label><Input value={form.cargo_desc} onChange={e => setField('cargo_desc', e.target.value)} disabled={readOnly} /></div>
+        <div><Label>Weight (kg) *</Label><Input type="number" value={form.weight} onChange={e => setField('weight', e.target.value)} disabled={readOnly} /></div>
+        <div><Label>Volume (CBM)</Label><Input type="number" value={form.volume} onChange={e => setField('volume', e.target.value)} disabled={readOnly} /></div>
+        <div><Label>Packages</Label><Input type="number" value={form.packages} onChange={e => setField('packages', e.target.value)} disabled={readOnly} /></div>
         <div><Label>Container Type</Label>
-          <Select value={form.container_type} onValueChange={v => setField('container_type', v)}>
+          <Select value={form.container_type} onValueChange={v => setField('container_type', v)} disabled={readOnly}>
             <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
             <SelectContent><SelectItem value="20ft">20' Standard</SelectItem><SelectItem value="40ft">40' Standard</SelectItem><SelectItem value="40hc">40' High Cube</SelectItem></SelectContent>
           </Select>
         </div>
-        <div><Label>ETD *</Label><Input type="date" value={form.etd} onChange={e => setField('etd', e.target.value)} /></div>
-        <div><Label>ETA *</Label><Input type="date" value={form.eta} onChange={e => setField('eta', e.target.value)} /></div>
+        <div><Label>ETD *</Label><Input type="date" value={form.etd} onChange={e => setField('etd', e.target.value)} disabled={readOnly} /></div>
+        <div><Label>ETA *</Label><Input type="date" value={form.eta} onChange={e => setField('eta', e.target.value)} disabled={readOnly} /></div>
         <div><Label>Incoterm</Label>
-          <Select value={form.incoterm} onValueChange={v => setField('incoterm', v)}>
+          <Select value={form.incoterm} onValueChange={v => setField('incoterm', v)} disabled={readOnly}>
             <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
             <SelectContent><SelectItem value="FOB">FOB</SelectItem><SelectItem value="CIF">CIF</SelectItem><SelectItem value="EXW">EXW</SelectItem><SelectItem value="DDP">DDP</SelectItem></SelectContent>
           </Select>
         </div>
       </div>
-      <Button onClick={() => onSave(form)}>Save Step 2</Button>
+      {!readOnly && <Button onClick={() => onSave(form)}>Save Step 2</Button>}
     </div>
   );
 }
 
-function Step3({ orderId, costs, vendors, partners, employees, order, insertCost, deleteCost }: any) {
+function Step3({ orderId, costs, vendors, partners, employees, order, insertCost, deleteCost, readOnly }: any) {
   const [form, setForm] = useState({ vendor_id: '', category: '', description: '', amount_usd: 0, due_date: '', currency_input: 'USD' });
   const [commissionForm, setCommissionForm] = useState({
     partner_id: '', partner_rate: 0, partner_amount_usd: 0,
@@ -413,7 +416,7 @@ function Step3({ orderId, costs, vendors, partners, employees, order, insertCost
                 <td className="px-4 py-2 text-muted-foreground">{c.description}</td>
                 <td className="px-4 py-2 text-right"><CurrencyDisplay usd={c.amount_usd} iqd={c.amount_iqd} size="sm" /></td>
                 <td className="px-4 py-2 text-center">{c.is_fx_locked && <FxLockedBadge />}</td>
-                <td className="px-4 py-2"><Button variant="ghost" size="sm" onClick={() => deleteCost.mutate(c.id)}><Trash2 className="w-3 h-3 text-destructive" /></Button></td>
+                {!readOnly && <td className="px-4 py-2"><Button variant="ghost" size="sm" onClick={() => deleteCost.mutate(c.id)}><Trash2 className="w-3 h-3 text-destructive" /></Button></td>}
               </tr>
             ))}
             {vendorCosts.length > 0 && (
@@ -428,6 +431,7 @@ function Step3({ orderId, costs, vendors, partners, employees, order, insertCost
       </div>
 
       {/* Add vendor cost form */}
+      {!readOnly && (
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4 bg-muted/30 rounded-lg">
         <Select value={form.vendor_id} onValueChange={v => setField('vendor_id', v)}>
           <SelectTrigger><SelectValue placeholder="Vendor" /></SelectTrigger>
@@ -437,10 +441,13 @@ function Step3({ orderId, costs, vendors, partners, employees, order, insertCost
         <Input placeholder="Description" value={form.description} onChange={e => setField('description', e.target.value)} />
         <Input type="number" placeholder="Amount USD" value={form.amount_usd || ''} onChange={e => setField('amount_usd', parseFloat(e.target.value) || 0)} />
       </div>
+      )}
+      {!readOnly && (
       <div className="flex items-center gap-3">
         <span className="text-sm text-muted-foreground">Preview: {formatUSD(dual.amount_usd)} | {formatIQD(dual.amount_iqd)}</span>
         <Button variant="outline" onClick={handleAdd} disabled={insertCost.isPending}><Plus className="w-4 h-4 mr-1" />Add Cost</Button>
       </div>
+      )}
 
       {/* Commission & Incentive Section */}
       <div className="border-t border-border pt-4 mt-4">
@@ -462,7 +469,7 @@ function Step3({ orderId, costs, vendors, partners, employees, order, insertCost
                     <td className="px-4 py-2 capitalize">{c.category === 'partner_commission' ? '🤝 Partner Commission' : '💰 Employee Incentive'}</td>
                     <td className="px-4 py-2 text-muted-foreground">{c.description}</td>
                     <td className="px-4 py-2 text-right"><CurrencyDisplay usd={c.amount_usd} iqd={c.amount_iqd} size="sm" /></td>
-                    <td className="px-4 py-2"><Button variant="ghost" size="sm" onClick={() => deleteCost.mutate(c.id)}><Trash2 className="w-3 h-3 text-destructive" /></Button></td>
+                    {!readOnly && <td className="px-4 py-2"><Button variant="ghost" size="sm" onClick={() => deleteCost.mutate(c.id)}><Trash2 className="w-3 h-3 text-destructive" /></Button></td>}
                   </tr>
                 ))}
                 <tr className="bg-muted/30 font-medium">
@@ -475,6 +482,7 @@ function Step3({ orderId, costs, vendors, partners, employees, order, insertCost
           </div>
         )}
 
+        {!readOnly && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-muted/30 rounded-lg">
           {/* Partner Commission */}
           <div className="space-y-2 p-3 border border-border rounded-lg">
@@ -510,11 +518,14 @@ function Step3({ orderId, costs, vendors, partners, employees, order, insertCost
             </div>
           </div>
         </div>
+        )}
+        {!readOnly && (
         <div className="mt-3">
           <Button variant="outline" onClick={handleAddCommission} disabled={insertCost.isPending}>
             <Plus className="w-4 h-4 mr-1" />Add Commission / Incentive
           </Button>
         </div>
+        )}
       </div>
 
       {/* Grand Total */}
@@ -1189,34 +1200,34 @@ function Step5({ quotations }: any) {
   );
 }
 
-function Step6({ order, onSave }: any) {
+function Step6({ order, onSave, readOnly }: any) {
   const [form, setForm] = useState({
     carrier_type: order.carrier_type || '', carrier_name: order.carrier_name || '',
     container_number: order.container_number || '', seal_number: order.seal_number || '',
     equipment_size: order.equipment_size || '',
   });
-  const setField = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }));
+  const setField = (k: string, v: any) => { if (!readOnly) setForm(p => ({ ...p, [k]: v })); };
 
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold">Step 6 — Shipment Execution</h3>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div><Label>Carrier Type</Label>
-          <Select value={form.carrier_type} onValueChange={v => setField('carrier_type', v)}>
+          <Select value={form.carrier_type} onValueChange={v => setField('carrier_type', v)} disabled={readOnly}>
             <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
             <SelectContent><SelectItem value="sea">Sea Carrier</SelectItem><SelectItem value="air">Air Carrier</SelectItem><SelectItem value="road">Road Carrier</SelectItem><SelectItem value="rail">Rail Carrier</SelectItem></SelectContent>
           </Select>
         </div>
-        <div><Label>Carrier Name</Label><Input value={form.carrier_name} onChange={e => setField('carrier_name', e.target.value)} /></div>
-        <div><Label>Container Number</Label><Input value={form.container_number} onChange={e => setField('container_number', e.target.value)} /></div>
-        <div><Label>Seal Number</Label><Input value={form.seal_number} onChange={e => setField('seal_number', e.target.value)} /></div>
+        <div><Label>Carrier Name</Label><Input value={form.carrier_name} onChange={e => setField('carrier_name', e.target.value)} disabled={readOnly} /></div>
+        <div><Label>Container Number</Label><Input value={form.container_number} onChange={e => setField('container_number', e.target.value)} disabled={readOnly} /></div>
+        <div><Label>Seal Number</Label><Input value={form.seal_number} onChange={e => setField('seal_number', e.target.value)} disabled={readOnly} /></div>
       </div>
-      <Button onClick={() => onSave(form)}>Save Execution Details</Button>
+      {!readOnly && <Button onClick={() => onSave(form)}>Save Execution Details</Button>}
     </div>
   );
 }
 
-function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice, insertBill, customerName, vendors, payments, customers, employees, partners, companySettings }: any) {
+function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice, insertBill, customerName, vendors, payments, customers, employees, partners, companySettings, readOnly }: any) {
   const queryClient = useQueryClient();
   const updateInvoice = useUpdateMutation('invoices');
   const updateBill = useUpdateMutation('vendor_bills');
@@ -1334,6 +1345,7 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
       || vendorCosts.length === 0    // no costs to bill
       || !quotation                  // no quotation yet
       || autoGeneratingBills         // already in progress
+      || readOnly                    // locked order — don't auto-create anything
     ) return;
 
     autoGenBillsRanRef.current = true; // mark as ran so it never fires twice
@@ -1904,11 +1916,13 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
         )}
 
         {/* Add Invoice button — always visible so users can add extra invoices if needed */}
+        {!readOnly && (
         <div>
           <Button variant="outline" onClick={() => setShowAddInvoiceForm(prev => !prev)}>
             <Plus className="w-4 h-4 mr-2" />{showAddInvoiceForm ? 'Cancel' : hasInvoices ? 'Add Another Invoice' : 'Add Invoice'}
           </Button>
         </div>
+        )}
       </div>
 
       {/* ==================== ACCOUNTS PAYABLE (AP) ==================== */}
@@ -2073,6 +2087,7 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
                     <Button variant="ghost" size="sm" onClick={() => window.print()}>
                       <Printer className="w-3.5 h-3.5 mr-1" />Print
                     </Button>
+                    {!readOnly && (
                     <Button variant="ghost" size="sm" onClick={() => {
                       setEditingBillId(isEditing ? null : bill.id);
                       setEditBillForm({
@@ -2088,10 +2103,13 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
                     }}>
                       <RefreshCw className="w-3.5 h-3.5 mr-1" />{isEditing ? 'Cancel Edit' : 'Edit'}
                     </Button>
+                    )}
+                    {!readOnly && (
                     <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive"
                       onClick={() => setDeleteBillTarget(bill)}>
                       <Trash2 className="w-3.5 h-3.5 mr-1" />Delete
                     </Button>
+                    )}
                   </div>
                 </div>
               );
@@ -2099,12 +2117,14 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
           </div>
         )}
 
-        {/* Add Vendor Bill Button - always available */}
+        {/* Add Vendor Bill Button - only shown when not readOnly */}
+        {!readOnly && (
         <div>
           <Button variant="outline" onClick={() => setShowAddBillForm(!showAddBillForm)}>
             <Plus className="w-4 h-4 mr-2" />{showAddBillForm ? 'Cancel' : 'Add Vendor Bill'}
           </Button>
         </div>
+        )}
 
         {/* Manual Add Vendor Bill Form */}
         {showAddBillForm && (
