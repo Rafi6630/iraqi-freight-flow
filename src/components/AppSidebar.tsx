@@ -209,7 +209,7 @@ export function AppSidebar() {
                         )}>
                         
                         <item.icon className={cn('w-4 h-4 shrink-0', isActive && 'text-sidebar-primary')} />
-                        <span>{item.title}</span>
+                        <span className="text-[#6dddee]">{item.title}</span>
                         {isActive &&
                         <span className="ml-auto w-1.5 h-1.5 rounded-full bg-sidebar-primary" />
                         }
