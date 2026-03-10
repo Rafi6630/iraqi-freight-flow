@@ -4,7 +4,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { LogOut } from 'lucide-react';
 
-export function AppLayout({ children }: { children: React.ReactNode }) {
+export function AppLayout({ children }: {children: React.ReactNode;}) {
   const { user, signOut } = useAuth();
 
   return (
@@ -28,11 +28,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               </Button>
             </div>
           </header>
-          <main className="flex-1 overflow-auto">
+          <main className="flex-1 overflow-auto border-black">
             {children}
           </main>
         </div>
       </div>
-    </SidebarProvider>
-  );
+    </SidebarProvider>);
+
 }
