@@ -201,7 +201,7 @@ export default function AdminConsolePage() {
     const nonCommCosts = orphanCosts?.filter((c: any) => c.category !== 'partner_commission' && c.category !== 'employee_incentive');
     if (nonCommCosts?.length)    issues.push({ table: 'order_costs',    issue: 'Costs with no vendor assigned',           count: nonCommCosts.length, severity: 'warning' });
     // Check cofounders ownership adds to 100
-    const { data: founders }     = await (supabase.from('cofounders') as any).select('ownership_pct');
+    const { data: founders }     = await (supabase.from('cofounders' as any) as any).select('ownership_pct');
     if (founders?.length) {
       const total = founders.reduce((s: number, f: any) => s + (f.ownership_pct || 0), 0);
       if (Math.abs(total - 100) > 0.01) issues.push({ table: 'cofounders', issue: `Ownership total is ${total}% (must be 100%)`, count: founders.length, severity: 'error' });
