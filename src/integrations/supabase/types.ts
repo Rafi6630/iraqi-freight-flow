@@ -92,6 +92,80 @@ export type Database = {
         }
         Relationships: []
       }
+      cofounder_transactions: {
+        Row: {
+          amount_iqd: number | null
+          amount_usd: number | null
+          created_at: string | null
+          founder_id: string
+          fx_rate: number | null
+          id: string
+          notes: string | null
+          transaction_date: string
+          type: string
+        }
+        Insert: {
+          amount_iqd?: number | null
+          amount_usd?: number | null
+          created_at?: string | null
+          founder_id: string
+          fx_rate?: number | null
+          id?: string
+          notes?: string | null
+          transaction_date?: string
+          type: string
+        }
+        Update: {
+          amount_iqd?: number | null
+          amount_usd?: number | null
+          created_at?: string | null
+          founder_id?: string
+          fx_rate?: number | null
+          id?: string
+          notes?: string | null
+          transaction_date?: string
+          type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cofounder_transactions_founder_id_fkey"
+            columns: ["founder_id"]
+            isOneToOne: false
+            referencedRelation: "cofounders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cofounders: {
+        Row: {
+          created_at: string | null
+          id: string
+          name: string
+          notes: string | null
+          ownership_pct: number | null
+          status: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          name: string
+          notes?: string | null
+          ownership_pct?: number | null
+          status?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          name?: string
+          notes?: string | null
+          ownership_pct?: number | null
+          status?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       commissions: {
         Row: {
           amount_iqd: number
@@ -759,6 +833,8 @@ export type Database = {
           equipment_size: string | null
           eta: string | null
           etd: string | null
+          fx_date: string | null
+          fx_rate: number | null
           id: string
           incoterm: string | null
           mode: Database["public"]["Enums"]["transport_mode"]
@@ -788,6 +864,8 @@ export type Database = {
           equipment_size?: string | null
           eta?: string | null
           etd?: string | null
+          fx_date?: string | null
+          fx_rate?: number | null
           id?: string
           incoterm?: string | null
           mode: Database["public"]["Enums"]["transport_mode"]
@@ -817,6 +895,8 @@ export type Database = {
           equipment_size?: string | null
           eta?: string | null
           etd?: string | null
+          fx_date?: string | null
+          fx_rate?: number | null
           id?: string
           incoterm?: string | null
           mode?: Database["public"]["Enums"]["transport_mode"]
