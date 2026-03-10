@@ -190,13 +190,13 @@ export default function CofounderCapitalPage() {
   };
 
   const delFounder = async (id: string) => {
-    await (supabase.from('cofounders') as any).delete().eq('id', id);
+    await (supabase.from('cofounders' as any) as any).delete().eq('id', id);
     queryClient.invalidateQueries({ queryKey: ['cofounders'] });
     toast.success('Co-founder deleted');
   };
 
   const delTxn = async (id: string) => {
-    await (supabase.from('cofounder_transactions') as any).delete().eq('id', id);
+    await (supabase.from('cofounder_transactions' as any) as any).delete().eq('id', id);
     queryClient.invalidateQueries({ queryKey: ['cofounder_transactions'] });
     toast.success('Transaction deleted');
   };
