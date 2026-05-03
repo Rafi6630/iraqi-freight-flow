@@ -26,6 +26,7 @@ import DocumentHubPage from "./pages/DocumentHubPage";
 import ReportsPage from "./pages/ReportsPage";
 import SettingsPage from "./pages/SettingsPage";
 import AdminConsolePage from "./pages/AdminConsolePage";
+import ExchangeOfficesPage from "./pages/ExchangeOfficesPage";
 import AuthPage from "./pages/AuthPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import NotFound from "./pages/NotFound";
@@ -67,6 +68,7 @@ function ProtectedRoutes() {
         <Route path="/document-hub" element={<DocumentHubPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/exchange-offices" element={<ExchangeOfficesPage />} />
         <Route path="/admin" element={<AdminConsolePage />} />
         <Route path="*" element={<NotFound />} />
       </Routes>

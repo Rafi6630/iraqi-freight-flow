@@ -77,6 +77,7 @@ const NAV_GROUPS = [
   icon: Settings,
   items: [
   { title: 'Settings', url: '/settings', icon: Settings },
+  { title: 'Exchange Offices', url: '/exchange-offices', icon: Landmark },
   { title: 'Admin Console', url: '/admin', icon: ShieldCheck }]
 
 }];
