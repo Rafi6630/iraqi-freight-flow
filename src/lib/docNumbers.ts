@@ -20,7 +20,7 @@
 
 import { supabase } from '@/integrations/supabase/client';
 
-type DocPrefix = 'ORD' | 'Q' | 'INV' | 'BILL';
+type DocPrefix = 'ORD' | 'Q' | 'INV' | 'BILL' | 'PAY';
 
 /**
  * Generate the next document number for a given prefix.

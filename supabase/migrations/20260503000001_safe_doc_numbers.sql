@@ -107,5 +107,18 @@ BEGIN
     VALUES ('BILL', v_year, v_max)
     ON CONFLICT (prefix, year) DO UPDATE SET last_seq = GREATEST(doc_number_counters.last_seq, v_max);
   END LOOP;
+
+  -- Payments: PAY-YYYY-NNNN
+  FOR v_year IN SELECT DISTINCT EXTRACT(YEAR FROM created_at)::INT
+                FROM public.payments WHERE pay_no LIKE 'PAY-%' LOOP
+    SELECT COALESCE(MAX(
+      (regexp_match(pay_no, 'PAY-\d{4}-(\d+)'))[1]::INT
+    ), 0) INTO v_max FROM public.payments
+    WHERE pay_no LIKE 'PAY-' || v_year || '-%';
+
+    INSERT INTO public.doc_number_counters (prefix, year, last_seq)
+    VALUES ('PAY', v_year, v_max)
+    ON CONFLICT (prefix, year) DO UPDATE SET last_seq = GREATEST(doc_number_counters.last_seq, v_max);
+  END LOOP;
 END;
 $$;

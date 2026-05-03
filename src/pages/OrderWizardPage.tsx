@@ -205,7 +205,7 @@ export default function OrderWizardPage() {
         {currentStep === 3 && <Step3 orderId={order.id} costs={costs} vendors={vendors} partners={partners} employees={employees} order={order} insertCost={insertCost} deleteCost={deleteCost} readOnly={!!order.closed_at} />}
         {currentStep === 4 && <Step4 order={order} costs={costs} quotations={quotations} insertQuotation={insertQuotation} customerName={customerName} customers={customers} partners={partners} employees={employees} quotationTemplates={quotationTemplates} companySettings={companySettings} readOnly={!!order.closed_at} />}
         {currentStep === 5 && <Step5 quotations={quotations} readOnly={!!order.closed_at} />}
-        {currentStep === 6 && <Step6 order={order} onSave={saveOrderField} readOnly={!!order.closed_at} />}
+        {currentStep === 6 && <Step6 order={order} onSave={saveOrderField} readOnly={!!order.closed_at} vendors={vendors} />}
         {currentStep === 7 && <Step7 order={order} quotations={quotations} costs={costs} invoices={invoices} vendorBills={vendorBills} insertInvoice={insertInvoice} insertBill={insertBill} customerName={customerName} vendors={vendors} payments={payments} customers={customers} employees={employees} partners={partners} companySettings={companySettings} readOnly={!!order.closed_at} />}
         {currentStep === 8 && <Step8 invoices={invoices} vendorBills={vendorBills} orderId={order.id} vendors={vendors} customers={customers} order={order} readOnly={!!order.closed_at} />}
         {currentStep === 9 && <Step9 order={order} costs={costs} invoices={invoices} vendorBills={vendorBills} payments={payments} employees={employees} partners={partners} onSave={saveOrderField} />}
@@ -1249,29 +1249,123 @@ function Step5({ quotations }: any) {
   );
 }
 
-function Step6({ order, onSave, readOnly }: any) {
+function Step6({ order, onSave, readOnly, vendors }: any) {
   const [form, setForm] = useState({
     carrier_type: order.carrier_type || '', carrier_name: order.carrier_name || '',
     container_number: order.container_number || '', seal_number: order.seal_number || '',
     equipment_size: order.equipment_size || '',
+    hs_codes: order.hs_codes || '', customs_broker_id: order.customs_broker_id || '',
+    declaration_number: order.declaration_number || '', duty_amount_usd: order.duty_amount_usd || 0,
+    customs_status: order.customs_status || 'pending', clearance_date: order.clearance_date || '',
   });
   const setField = (k: string, v: any) => { if (!readOnly) setForm(p => ({ ...p, [k]: v })); };
 
+  const { data: milestones = [], refetch: refetchMilestones } = useQuery({
+    queryKey: ['milestones', order.id],
+    queryFn: async () => {
+      const { data, error } = await (supabase.from('shipment_milestones') as any).select('*').eq('order_id', order.id).order('occurred_at', { ascending: false });
+      if (error) throw error;
+      return data;
+    }
+  });
+
+  const [mForm, setMForm] = useState({ name: '', location: '', date: new Date().toISOString().split('T')[0] });
+  const handleAddMilestone = async () => {
+    if (!mForm.name) return;
+    await (supabase.from('shipment_milestones') as any).insert({
+      order_id: order.id, milestone_name: mForm.name, location: mForm.location, occurred_at: mForm.date
+    });
+    setMForm({ name: '', location: '', date: new Date().toISOString().split('T')[0] });
+    refetchMilestones();
+    toast.success('Milestone added');
+  };
+
   return (
-    <div className="space-y-4">
-      <h3 className="text-lg font-semibold">Step 6 — Shipment Execution</h3>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div><Label>Carrier Type</Label>
-          <Select value={form.carrier_type} onValueChange={v => setField('carrier_type', v)} disabled={readOnly}>
-            <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
-            <SelectContent><SelectItem value="sea">Sea Carrier</SelectItem><SelectItem value="air">Air Carrier</SelectItem><SelectItem value="road">Road Carrier</SelectItem><SelectItem value="rail">Rail Carrier</SelectItem></SelectContent>
-          </Select>
+    <div className="space-y-6">
+      <div className="space-y-4">
+        <h3 className="text-lg font-semibold border-b pb-2">Shipment Execution</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div><Label>Carrier Type</Label>
+            <Select value={form.carrier_type} onValueChange={v => setField('carrier_type', v)} disabled={readOnly}>
+              <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+              <SelectContent><SelectItem value="sea">Sea Carrier</SelectItem><SelectItem value="air">Air Carrier</SelectItem><SelectItem value="road">Road Carrier</SelectItem><SelectItem value="rail">Rail Carrier</SelectItem></SelectContent>
+            </Select>
+          </div>
+          <div><Label>Carrier Name</Label><Input value={form.carrier_name} onChange={e => setField('carrier_name', e.target.value)} disabled={readOnly} /></div>
+          <div><Label>Container Number</Label><Input value={form.container_number} onChange={e => setField('container_number', e.target.value)} disabled={readOnly} /></div>
+          <div><Label>Seal Number</Label><Input value={form.seal_number} onChange={e => setField('seal_number', e.target.value)} disabled={readOnly} /></div>
         </div>
-        <div><Label>Carrier Name</Label><Input value={form.carrier_name} onChange={e => setField('carrier_name', e.target.value)} disabled={readOnly} /></div>
-        <div><Label>Container Number</Label><Input value={form.container_number} onChange={e => setField('container_number', e.target.value)} disabled={readOnly} /></div>
-        <div><Label>Seal Number</Label><Input value={form.seal_number} onChange={e => setField('seal_number', e.target.value)} disabled={readOnly} /></div>
       </div>
-      {!readOnly && <Button onClick={() => onSave(form)}>Save Execution Details</Button>}
+
+      <div className="space-y-4">
+        <h3 className="text-lg font-semibold border-b pb-2">Customs & Clearance</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div><Label>HS Codes</Label><Input placeholder="e.g. 8471.30, 8517.12" value={form.hs_codes} onChange={e => setField('hs_codes', e.target.value)} disabled={readOnly} /></div>
+          <div><Label>Customs Broker</Label>
+            <Select value={form.customs_broker_id} onValueChange={v => setField('customs_broker_id', v)} disabled={readOnly}>
+              <SelectTrigger><SelectValue placeholder="Select Broker" /></SelectTrigger>
+              <SelectContent>{vendors.map((v: any) => <SelectItem key={v.id} value={v.id}>{v.company}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div><Label>Declaration #</Label><Input value={form.declaration_number} onChange={e => setField('declaration_number', e.target.value)} disabled={readOnly} /></div>
+          <div><Label>Duty Amount (USD)</Label><Input type="number" value={form.duty_amount_usd || ''} onChange={e => setField('duty_amount_usd', parseFloat(e.target.value) || 0)} disabled={readOnly} /></div>
+          <div><Label>Customs Status</Label>
+            <Select value={form.customs_status} onValueChange={v => setField('customs_status', v)} disabled={readOnly}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="submitted">Submitted</SelectItem>
+                <SelectItem value="clearing">Clearing</SelectItem>
+                <SelectItem value="cleared">Cleared</SelectItem>
+                <SelectItem value="rejected">Rejected</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div><Label>Clearance Date</Label><Input type="date" value={form.clearance_date} onChange={e => setField('clearance_date', e.target.value)} disabled={readOnly} /></div>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-lg font-semibold border-b pb-2">Shipment Milestones</h3>
+        <div className="space-y-4">
+          {milestones.length > 0 && (
+            <div className="relative pl-6 space-y-4 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-muted">
+              {milestones.map((m: any) => (
+                <div key={m.id} className="relative">
+                  <div className="absolute -left-6 top-1.5 w-4 h-4 rounded-full border-2 border-background bg-primary"></div>
+                  <div>
+                    <p className="text-sm font-semibold">{m.milestone_name}</p>
+                    <p className="text-xs text-muted-foreground">{new Date(m.occurred_at).toLocaleString()} {m.location ? `· ${m.location}` : ''}</p>
+                    {m.notes && <p className="text-xs mt-1 text-muted-foreground italic">"{m.notes}"</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!readOnly && (
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 p-3 bg-muted/30 rounded-lg">
+              <div className="md:col-span-2">
+                <Label className="text-xs">Event Name</Label>
+                <Input placeholder="e.g. Departed Origin" value={mForm.name} onChange={e => setMForm(p => ({ ...p, name: e.target.value }))} />
+              </div>
+              <div>
+                <Label className="text-xs">Location</Label>
+                <Input placeholder="City/Port" value={mForm.location} onChange={e => setMForm(p => ({ ...p, location: e.target.value }))} />
+              </div>
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
+                  <Label className="text-xs">Date</Label>
+                  <Input type="datetime-local" value={mForm.date} onChange={e => setMForm(p => ({ ...p, date: e.target.value }))} />
+                </div>
+                <Button variant="outline" size="icon" onClick={handleAddMilestone}><Plus className="w-4 h-4" /></Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {!readOnly && <Button onClick={() => onSave(form)}>Save Execution & Customs</Button>}
     </div>
   );
 }
@@ -1861,7 +1955,7 @@ function Step7({ order, quotations, costs, invoices, vendorBills, insertInvoice,
                         const termDueDate = new Date(new Date(invoiceDate).getTime() + termDueDays * 86400000).toISOString().split('T')[0];
                         return (
                           <tr key={t.id} className="border-b border-border">
-                            <td className="px-3 py-2 font-mono text-xs text-primary">INV-{new Date().getFullYear()}-{String(invoices.length + i + 1).padStart(4, '0')}</td>
+                            <td className="px-3 py-2 font-mono text-xs text-primary">INV-{new Date().getFullYear()}-XXXX</td>
                             <td className="px-3 py-2">{t.description || `Installment ${i + 1}`}</td>
                             <td className="px-3 py-2 text-right font-mono">{t.percentage}%</td>
                             <td className="px-3 py-2 text-right font-mono">{formatUSD(termUsd)}</td>
@@ -2489,7 +2583,7 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers, order, read
 
   const handleRecordARPayment = async () => {
     if (!arForm.ref_id || arForm.amount_usd <= 0) { toast.error('Select invoice and enter amount'); return; }
-    const payNo = `PAY-${new Date().getFullYear()}-${String(payments.length + 1).padStart(4, '0')}`;
+    const payNo = await nextDocNumber('PAY');
     const feeUsd = arForm.payment_fee_usd || 0;
     const feeIqd = Math.round(feeUsd * arForm.pay_fx_rate);
     await insertPayment.mutateAsync({
@@ -2516,7 +2610,7 @@ function Step8({ invoices, vendorBills, orderId, vendors, customers, order, read
 
   const handleRecordAPPayment = async () => {
     if (!apForm.ref_id || apForm.amount_usd <= 0) { toast.error('Select bill and enter amount'); return; }
-    const payNo = `PAY-${new Date().getFullYear()}-${String(payments.length + 1).padStart(4, '0')}`;
+    const payNo = await nextDocNumber('PAY');
     const feeUsd = apForm.payment_fee_usd || 0;
     const feeIqd = Math.round(feeUsd * apForm.pay_fx_rate);
     await insertPayment.mutateAsync({
