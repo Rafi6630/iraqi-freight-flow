@@ -14,6 +14,10 @@ import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const reportTypes = [
   { id: 'profitability', name: 'Profitability', desc: 'Profit per order, customer, route, mode' },
@@ -154,6 +158,68 @@ export default function ReportsPage() {
     return Object.entries(counts).map(([name, value]) => ({ name: name.toUpperCase(), value }));
   }, [orders]);
 
+  // Order Profitability
+  const orderProfitData = useMemo(() => {
+    return orders
+      .filter(o => {
+        const d = o.created_at;
+        return !d || (d >= dateFrom && d <= `${dateTo}T23:59:59`);
+      })
+      .map(o => {
+        const rev = invoices.filter(i => i.order_id === o.id).reduce((s, i) => s + (i.amount_usd || 0), 0);
+        const cCosts = orderCosts.filter(c => c.order_id === o.id);
+        const cogs = cCosts.filter(c => c.category !== 'partner_commission' && c.category !== 'employee_incentive').reduce((s, c) => s + (c.amount_usd || 0), 0);
+        const comms = cCosts.filter(c => c.category === 'partner_commission' || c.category === 'employee_incentive').reduce((s, c) => s + (c.amount_usd || 0), 0);
+        const oPayments = payments.filter(p => p.order_id === o.id);
+        const fees = oPayments.reduce((s, p) => s + (p.payment_fee_usd || 0), 0);
+        const fx = oPayments.reduce((s, p) => s + (p.fx_gain_loss_usd || 0), 0);
+        const profit = rev - cogs - comms - fees + fx;
+        const margin = rev > 0 ? (profit / rev) * 100 : 0;
+        const customer = customers.find(c => c.id === o.customer_id)?.company || '—';
+        return { id: o.id, order_no: o.order_no, customer, mode: o.mode, revenue: rev, cogs, commissions: comms, fees, fx, profit, margin };
+      })
+      .filter(o => o.revenue > 0 || o.cogs > 0)
+      .sort((a, b) => b.profit - a.profit);
+  }, [orders, invoices, orderCosts, payments, customers, dateFrom, dateTo]);
+
+  // Customer Profitability
+  const customerProfitData = useMemo(() => {
+    const data: Record<string, any> = {};
+    orderProfitData.forEach(o => {
+      const custName = o.customer;
+      if (!data[custName]) {
+        data[custName] = { name: custName, revenue: 0, cogs: 0, commissions: 0, fees: 0, fx: 0, profit: 0, orderCount: 0 };
+      }
+      data[custName].revenue += o.revenue;
+      data[custName].cogs += o.cogs;
+      data[custName].commissions += o.commissions;
+      data[custName].fees += o.fees;
+      data[custName].fx += o.fx;
+      data[custName].profit += o.profit;
+      data[custName].orderCount += 1;
+    });
+    return Object.values(data).sort((a: any, b: any) => b.profit - a.profit);
+  }, [orderProfitData]);
+
+  // Mode Profitability
+  const modeProfitabilityData = useMemo(() => {
+    const data: Record<string, any> = {};
+    orderProfitData.forEach(o => {
+      const mode = o.mode || 'unknown';
+      if (!data[mode]) {
+        data[mode] = { mode, revenue: 0, cogs: 0, commissions: 0, fees: 0, fx: 0, profit: 0, orderCount: 0 };
+      }
+      data[mode].revenue += o.revenue;
+      data[mode].cogs += o.cogs;
+      data[mode].commissions += o.commissions;
+      data[mode].fees += o.fees;
+      data[mode].fx += o.fx;
+      data[mode].profit += o.profit;
+      data[mode].orderCount += 1;
+    });
+    return Object.values(data).sort((a: any, b: any) => b.profit - a.profit);
+  }, [orderProfitData]);
+
   return (
     <div className="erp-page">
       <div className="erp-page-header">
@@ -212,20 +278,137 @@ export default function ReportsPage() {
                         </div>
                       ))}
                     </div>
-                    {modeData.length > 0 && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {modeData.length > 0 && (
+                        <div className="h-64">
+                          <p className="text-sm font-medium mb-2">Orders by Mode</p>
+                          <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                              <Pie data={modeData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label>
+                                {modeData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                              </Pie>
+                              <Tooltip />
+                              <Legend />
+                            </PieChart>
+                          </ResponsiveContainer>
+                        </div>
+                      )}
                       <div className="h-64">
-                        <p className="text-sm font-medium mb-2">Orders by Mode</p>
+                        <p className="text-sm font-medium mb-2">Profit by Mode</p>
                         <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                            <Pie data={modeData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label>
-                              {modeData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                            </Pie>
-                            <Tooltip />
-                            <Legend />
-                          </PieChart>
+                          <BarChart data={modeProfitabilityData}>
+                            <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                            <XAxis dataKey="mode" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }} />
+                            <YAxis tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }} />
+                            <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }} />
+                            <Bar dataKey="profit" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                          </BarChart>
                         </ResponsiveContainer>
                       </div>
-                    )}
+                    </div>
+
+                    <Tabs defaultValue="orders" className="w-full">
+                      <TabsList className="grid w-full grid-cols-3">
+                        <TabsTrigger value="orders">Profit by Order</TabsTrigger>
+                        <TabsTrigger value="customers">Profit by Customer</TabsTrigger>
+                        <TabsTrigger value="modes">Profit by Mode</TabsTrigger>
+                      </TabsList>
+                      <TabsContent value="orders" className="space-y-4 pt-4">
+                        <div className="rounded-lg border border-border overflow-hidden">
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="bg-muted/50">
+                                <TableHead>Order #</TableHead>
+                                <TableHead>Customer</TableHead>
+                                <TableHead className="text-right">Revenue</TableHead>
+                                <TableHead className="text-right">Profit</TableHead>
+                                <TableHead className="text-right">Margin</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {orderProfitData.slice(0, 20).map((o: any) => (
+                                <TableRow key={o.id}>
+                                  <TableCell className="font-mono font-medium">{o.order_no}</TableCell>
+                                  <TableCell className="text-xs truncate max-w-[150px]">{o.customer}</TableCell>
+                                  <TableCell className="text-right font-mono text-xs">${o.revenue.toLocaleString()}</TableCell>
+                                  <TableCell className={`text-right font-mono text-xs font-semibold ${o.profit >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                    ${o.profit.toLocaleString()}
+                                  </TableCell>
+                                  <TableCell className={`text-right font-mono text-xs ${o.margin >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                    {o.margin.toFixed(1)}%
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                              {orderProfitData.length > 20 && (
+                                <TableRow>
+                                  <TableCell colSpan={5} className="text-center text-xs text-muted-foreground">Showing top 20 orders. Total orders: {orderProfitData.length}</TableCell>
+                                </TableRow>
+                              )}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </TabsContent>
+                      <TabsContent value="customers" className="space-y-4 pt-4">
+                        <div className="rounded-lg border border-border overflow-hidden">
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="bg-muted/50">
+                                <TableHead>Customer</TableHead>
+                                <TableHead className="text-center">Orders</TableHead>
+                                <TableHead className="text-right">Revenue</TableHead>
+                                <TableHead className="text-right">Profit</TableHead>
+                                <TableHead className="text-right">Avg Margin</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {customerProfitData.map((c: any) => (
+                                <TableRow key={c.name}>
+                                  <TableCell className="font-medium text-xs">{c.name}</TableCell>
+                                  <TableCell className="text-center text-xs">{c.orderCount}</TableCell>
+                                  <TableCell className="text-right font-mono text-xs">${c.revenue.toLocaleString()}</TableCell>
+                                  <TableCell className={`text-right font-mono text-xs font-semibold ${c.profit >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                    ${c.profit.toLocaleString()}
+                                  </TableCell>
+                                  <TableCell className="text-right font-mono text-xs">
+                                    {c.revenue > 0 ? ((c.profit / c.revenue) * 100).toFixed(1) : 0}%
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </TabsContent>
+                      <TabsContent value="modes" className="space-y-4 pt-4">
+                        <div className="rounded-lg border border-border overflow-hidden">
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="bg-muted/50">
+                                <TableHead>Mode</TableHead>
+                                <TableHead className="text-center">Orders</TableHead>
+                                <TableHead className="text-right">Revenue</TableHead>
+                                <TableHead className="text-right">Profit</TableHead>
+                                <TableHead className="text-right">Avg Margin</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {modeProfitabilityData.map((m: any) => (
+                                <TableRow key={m.mode}>
+                                  <TableCell className="font-medium uppercase text-xs">{m.mode}</TableCell>
+                                  <TableCell className="text-center text-xs">{m.orderCount}</TableCell>
+                                  <TableCell className="text-right font-mono text-xs">${m.revenue.toLocaleString()}</TableCell>
+                                  <TableCell className={`text-right font-mono text-xs font-semibold ${m.profit >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                    ${m.profit.toLocaleString()}
+                                  </TableCell>
+                                  <TableCell className="text-right font-mono text-xs">
+                                    {m.revenue > 0 ? ((m.profit / m.revenue) * 100).toFixed(1) : 0}%
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </TabsContent>
+                    </Tabs>
                   </div>
                 )}
 

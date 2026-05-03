@@ -107,6 +107,7 @@ export default function AdminConsolePage() {
   // ─── Scanner state ─────────────────────────────────────────────────────────
   const [scanning,    setScanning]    = useState(false);
   const [scanResults, setScanResults] = useState<IntegrityIssue[] | null>(null);
+  const [gapResults,  setGapResults]  = useState<any[] | null>(null);
 
   // ─── Users & Roles ─────────────────────────────────────────────────────────
   const { data: roles = [],     isLoading: rolesLoading } = useTableQuery('user_roles', { orderBy: 'user_id' });
@@ -186,6 +187,9 @@ export default function AdminConsolePage() {
   const runScanner = async () => {
     setScanning(true);
     const issues: IntegrityIssue[] = [];
+    const gaps: any[] = [];
+
+    // 1. Data Integrity Checks
     const { data: orphanInv }   = await (supabase.from('invoices') as any).select('id').is('customer_id', null);
     if (orphanInv?.length)       issues.push({ table: 'invoices',       issue: 'Invoices with no customer',               count: orphanInv.length,   severity: 'warning' });
     const { data: orphanBills }  = await (supabase.from('vendor_bills') as any).select('id').is('vendor_id', null);
@@ -200,14 +204,53 @@ export default function AdminConsolePage() {
     const { data: orphanCosts }  = await (supabase.from('order_costs') as any).select('id, category').is('vendor_id', null);
     const nonCommCosts = orphanCosts?.filter((c: any) => c.category !== 'partner_commission' && c.category !== 'employee_incentive');
     if (nonCommCosts?.length)    issues.push({ table: 'order_costs',    issue: 'Costs with no vendor assigned',           count: nonCommCosts.length, severity: 'warning' });
-    // Check cofounders ownership adds to 100
+
     const { data: founders }     = await (supabase.from('cofounders' as any) as any).select('ownership_pct');
     if (founders?.length) {
       const total = founders.reduce((s: number, f: any) => s + (f.ownership_pct || 0), 0);
       if (Math.abs(total - 100) > 0.01) issues.push({ table: 'cofounders', issue: `Ownership total is ${total}% (must be 100%)`, count: founders.length, severity: 'error' });
     }
+
+    // 2. Gap Analysis (Missing documents / inconsistent states)
+    const { data: allOrders } = await (supabase.from('orders') as any).select('id, order_no, status_step, closed_at');
+    const { data: allQuotes } = await (supabase.from('quotations') as any).select('id, order_id, status');
+    const { data: allInvoices } = await (supabase.from('invoices') as any).select('id, order_id, amount_usd, paid_usd');
+    const { data: allBills } = await (supabase.from('vendor_bills') as any).select('id, order_id, amount_usd, paid_usd');
+    const { data: allCosts } = await (supabase.from('order_costs') as any).select('id, order_id, amount_usd, vendor_id, category');
+
+    if (allOrders) {
+      allOrders.forEach(o => {
+        const orderQuotes = allQuotes?.filter(q => q.order_id === o.id) || [];
+        const orderInvoices = allInvoices?.filter(i => i.order_id === o.id) || [];
+        const orderBills = allBills?.filter(b => b.order_id === o.id) || [];
+        const orderCosts = allCosts?.filter(c => c.order_id === o.id && c.category !== 'partner_commission' && c.category !== 'employee_incentive') || [];
+
+        // Approved Quote without Invoice
+        if (orderQuotes.some(q => q.status === 'approved') && orderInvoices.length === 0) {
+          gaps.push({ order_no: o.order_no, gap: 'Approved quote exists but no invoice issued', severity: 'warning' });
+        }
+
+        // Unbilled Costs (Cost sheet entries with no corresponding vendor bill)
+        const billedAmount = orderBills.reduce((s, b) => s + (b.amount_usd || 0), 0);
+        const costAmount = orderCosts.reduce((s, c) => s + (c.amount_usd || 0), 0);
+        if (costAmount > billedAmount + 0.01 && o.status_step >= 7) {
+          gaps.push({ order_no: o.order_no, gap: `Unbilled costs: ${costAmount - billedAmount} USD difference`, severity: 'warning' });
+        }
+
+        // Closed order with outstanding AR/AP
+        if (o.closed_at) {
+          const outstandingAR = orderInvoices.reduce((s, i) => s + (i.amount_usd || 0) - (i.paid_usd || 0), 0);
+          const outstandingAP = orderBills.reduce((s, b) => s + (b.amount_usd || 0) - (b.paid_usd || 0), 0);
+          if (outstandingAR > 0.01) gaps.push({ order_no: o.order_no, gap: `Closed order has outstanding AR: ${outstandingAR} USD`, severity: 'error' });
+          if (outstandingAP > 0.01) gaps.push({ order_no: o.order_no, gap: `Closed order has outstanding AP: ${outstandingAP} USD`, severity: 'error' });
+        }
+      });
+    }
+
     if (issues.length === 0) issues.push({ table: '', issue: 'No integrity issues found — data looks clean!', count: 0, severity: 'warning' });
+
     setScanResults(issues);
+    setGapResults(gaps);
     setScanning(false);
   };
 
@@ -255,29 +298,63 @@ export default function AdminConsolePage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="erp-metric-card space-y-3">
               <h3 className="text-sm font-semibold flex items-center gap-2">
-                <Search className="w-4 h-4 text-primary" /> Data Integrity Scanner
+                <Search className="w-4 h-4 text-primary" /> System Scanner & Gap Analysis
               </h3>
               <p className="text-xs text-muted-foreground">
-                Checks for orphan records, mismatched totals, stuck orders, overpayments, and co-founder ownership totals.
+                Checks for orphan records, mismatched totals, unbilled costs, and missing financial documents.
               </p>
               <Button size="sm" onClick={runScanner} disabled={scanning}>
                 {scanning && <Loader2 className="w-3 h-3 mr-1 animate-spin" />} Run Scanner
               </Button>
-              {scanResults && (
-                <div className="mt-2 space-y-1.5">
-                  {scanResults.map((r, i) => (
-                    <div key={i} className="flex items-start gap-2 text-xs">
-                      {r.severity === 'error' ? <XCircle className="w-3.5 h-3.5 text-destructive shrink-0 mt-0.5" />
-                        : r.table === '' ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0 mt-0.5" />
-                        : <AlertTriangle className="w-3.5 h-3.5 text-yellow-500 shrink-0 mt-0.5" />}
-                      <span className="text-muted-foreground">
-                        {r.issue}{r.count > 0 && <span className="font-mono ml-1">({r.count})</span>}
-                        {r.table && <span className="ml-1 text-primary font-mono">[{r.table}]</span>}
-                      </span>
+
+              <Tabs defaultValue="integrity" className="mt-4">
+                <TabsList className="grid w-full grid-cols-2 h-8">
+                  <TabsTrigger value="integrity" className="text-xs">Integrity ({scanResults?.filter(r => r.table !== '').length || 0})</TabsTrigger>
+                  <TabsTrigger value="gaps" className="text-xs">Gap Analysis ({gapResults?.length || 0})</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="integrity" className="pt-2">
+                  {scanResults && (
+                    <div className="space-y-1.5">
+                      {scanResults.map((r, i) => (
+                        <div key={i} className="flex items-start gap-2 text-xs">
+                          {r.severity === 'error' ? <XCircle className="w-3.5 h-3.5 text-destructive shrink-0 mt-0.5" />
+                            : r.table === '' ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0 mt-0.5" />
+                            : <AlertTriangle className="w-3.5 h-3.5 text-yellow-500 shrink-0 mt-0.5" />}
+                          <span className="text-muted-foreground">
+                            {r.issue}{r.count > 0 && <span className="font-mono ml-1">({r.count})</span>}
+                            {r.table && <span className="ml-1 text-primary font-mono">[{r.table}]</span>}
+                          </span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              )}
+                  )}
+                </TabsContent>
+
+                <TabsContent value="gaps" className="pt-2">
+                  {gapResults && gapResults.length > 0 ? (
+                    <div className="space-y-1.5">
+                      {gapResults.map((g, i) => (
+                        <div key={i} className="flex items-start gap-2 text-xs">
+                          {g.severity === 'error' ? <XCircle className="w-3.5 h-3.5 text-destructive shrink-0 mt-0.5" />
+                            : <AlertTriangle className="w-3.5 h-3.5 text-yellow-500 shrink-0 mt-0.5" />}
+                          <span className="text-muted-foreground">
+                            <span className="font-mono font-semibold text-primary mr-1">[{g.order_no}]</span>
+                            {g.gap}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : gapResults ? (
+                    <div className="flex items-center gap-2 text-xs text-green-600">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      No gaps detected in order documentation.
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground italic">Run scanner to see results</p>
+                  )}
+                </TabsContent>
+              </Tabs>
             </div>
 
             <div className="erp-metric-card space-y-3">

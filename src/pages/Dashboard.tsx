@@ -5,7 +5,10 @@ import {
 import { StatusBadge } from '@/components/StatusBadge';
 import { useTableQuery } from '@/hooks/use-supabase-query';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useMemo } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -39,6 +42,10 @@ function MetricCard({ label, value, subValue, icon: Icon, color = 'text-foregrou
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const currentYear = new Date().getFullYear();
+  const [dateFrom, setDateFrom] = useState(`${currentYear}-01-01`);
+  const [dateTo, setDateTo] = useState(`${currentYear}-12-31`);
+
   const { data: orders = [], isLoading: ordersLoading } = useTableQuery<any>('orders');
   const { data: invoices = [] } = useTableQuery<any>('invoices');
   const { data: vendorBills = [] } = useTableQuery<any>('vendor_bills');
@@ -49,65 +56,83 @@ export default function Dashboard() {
 
   const loading = ordersLoading;
 
+  const filteredInvoices = useMemo(() => invoices.filter(i => !i.issued_date || (i.issued_date >= dateFrom && i.issued_date <= dateTo)), [invoices, dateFrom, dateTo]);
+  const filteredBills = useMemo(() => vendorBills.filter(b => !b.issued_date || (b.issued_date >= dateFrom && b.issued_date <= dateTo)), [vendorBills, dateFrom, dateTo]);
+  const filteredPayments = useMemo(() => payments.filter(p => !p.date || (p.date >= dateFrom && p.date <= dateTo)), [payments, dateFrom, dateTo]);
+  const filteredOrderCosts = useMemo(() => orderCosts.filter(c => !c.created_at || (c.created_at >= dateFrom && c.created_at <= `${dateTo}T23:59:59`)), [orderCosts, dateFrom, dateTo]);
+  const filteredExpenses = useMemo(() => expenses.filter(e => !e.date || (e.date >= dateFrom && e.date <= dateTo)), [expenses, dateFrom, dateTo]);
+  const filteredOrders = useMemo(() => orders.filter(o => !o.created_at || (o.created_at >= dateFrom && o.created_at <= `${dateTo}T23:59:59`)), [orders, dateFrom, dateTo]);
+
   const metrics = useMemo(() => {
-    const totalRevenue = invoices.reduce((s: number, i: any) => s + (i.amount_usd || 0), 0);
-    const paidAR = invoices.reduce((s: number, i: any) => s + (i.paid_usd || 0), 0);
+    const totalRevenue = filteredInvoices.reduce((s: number, i: any) => s + (i.amount_usd || 0), 0);
+    const paidAR = filteredInvoices.reduce((s: number, i: any) => s + (i.paid_usd || 0), 0);
     const outstandingAR = totalRevenue - paidAR;
 
-    const totalAP = vendorBills.reduce((s: number, b: any) => s + (b.amount_usd || 0), 0);
-    const paidAP = vendorBills.reduce((s: number, b: any) => s + (b.paid_usd || 0), 0);
+    const totalAP = filteredBills.reduce((s: number, b: any) => s + (b.amount_usd || 0), 0);
+    const paidAP = filteredBills.reduce((s: number, b: any) => s + (b.paid_usd || 0), 0);
     const outstandingAP = totalAP - paidAP;
 
-    const totalCosts = orderCosts
+    const totalCosts = filteredOrderCosts
       .filter((c: any) => c.category !== 'partner_commission' && c.category !== 'employee_incentive')
       .reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
-    const totalCommissions = orderCosts
+    const totalCommissions = filteredOrderCosts
       .filter((c: any) => c.category === 'partner_commission' || c.category === 'employee_incentive')
       .reduce((s: number, c: any) => s + (c.amount_usd || 0), 0);
-    const totalExpenses = expenses.reduce((s: number, e: any) => s + (e.amount_usd || 0), 0);
-    const totalPaymentFees = payments.reduce((s: number, p: any) => s + (p.payment_fee_usd || 0), 0);
-    const fxGainLoss = payments.reduce((s: number, p: any) => s + (p.fx_gain_loss_usd || 0), 0);
+    const totalExpenses = filteredExpenses.reduce((s: number, e: any) => s + (e.amount_usd || 0), 0);
+    const totalPaymentFees = filteredPayments.reduce((s: number, p: any) => s + (p.payment_fee_usd || 0), 0);
+    const fxGainLoss = filteredPayments.reduce((s: number, p: any) => s + (p.fx_gain_loss_usd || 0), 0);
 
     const grossProfit = totalRevenue - totalCosts;
     const netProfit = grossProfit - totalCommissions - totalExpenses - totalPaymentFees + fxGainLoss;
     const margin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
-    const activeOrders = orders.filter((o: any) => o.status_step < 9).length;
-    const closedOrders = orders.filter((o: any) => o.status_step >= 9 && o.closed_at).length;
-    const overdueInvoices = invoices.filter((i: any) => i.status !== 'paid' && i.due_date && new Date(i.due_date) < new Date()).length;
-    const overdueBills = vendorBills.filter((b: any) => b.status !== 'paid' && b.due_date && new Date(b.due_date) < new Date()).length;
+    const activeOrders = filteredOrders.filter((o: any) => o.status_step < 9).length;
+    const closedOrders = filteredOrders.filter((o: any) => o.status_step >= 9 && o.closed_at).length;
+    const overdueInvoices = filteredInvoices.filter((i: any) => i.status !== 'paid' && i.due_date && new Date(i.due_date) < new Date()).length;
+    const overdueBills = filteredBills.filter((b: any) => b.status !== 'paid' && b.due_date && new Date(b.due_date) < new Date()).length;
 
     return {
       totalRevenue, outstandingAR, totalAP, outstandingAP,
       totalCosts, totalCommissions, totalExpenses, totalPaymentFees, fxGainLoss,
       grossProfit, netProfit, margin,
-      activeOrders, closedOrders, totalOrders: orders.length,
+      activeOrders, closedOrders, totalOrders: filteredOrders.length,
       overdueInvoices, overdueBills,
     };
-  }, [orders, invoices, vendorBills, payments, orderCosts, expenses]);
+  }, [filteredOrders, filteredInvoices, filteredBills, filteredPayments, filteredOrderCosts, filteredExpenses]);
 
   const monthlyChart = useMemo(() => {
-    const currentYear = new Date().getFullYear();
     const months: Record<string, { month: string; Revenue: number; Costs: number; Profit: number }> = {};
-    for (let m = 1; m <= 12; m++) {
-      const key = `${currentYear}-${String(m).padStart(2, '0')}`;
-      months[key] = { month: new Date(currentYear, m - 1).toLocaleString('en', { month: 'short' }), Revenue: 0, Costs: 0, Profit: 0 };
+
+    // Determine which months to show based on date range
+    const start = new Date(dateFrom);
+    const end = new Date(dateTo);
+    const curr = new Date(start);
+    curr.setDate(1); // start of month
+
+    while (curr <= end) {
+      const key = curr.toISOString().substring(0, 7);
+      months[key] = {
+        month: curr.toLocaleString('en', { month: 'short', year: '2-digit' }),
+        Revenue: 0, Costs: 0, Profit: 0
+      };
+      curr.setMonth(curr.getMonth() + 1);
     }
-    invoices.forEach((inv: any) => {
+
+    filteredInvoices.forEach((inv: any) => {
       const key = (inv.issued_date || '').substring(0, 7);
       if (months[key]) months[key].Revenue += inv.amount_usd || 0;
     });
-    orderCosts.forEach((c: any) => {
+    filteredOrderCosts.forEach((c: any) => {
       const key = (c.created_at || '').substring(0, 7);
       if (months[key] && c.category !== 'partner_commission' && c.category !== 'employee_incentive')
         months[key].Costs += c.amount_usd || 0;
     });
     return Object.values(months).map(m => ({ ...m, Profit: Math.round((m.Revenue - m.Costs) * 100) / 100 }));
-  }, [invoices, orderCosts]);
+  }, [filteredInvoices, filteredOrderCosts, dateFrom, dateTo]);
 
   const recentOrders = useMemo(() =>
-    [...orders].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')).slice(0, 8),
-    [orders]);
+    [...filteredOrders].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')).slice(0, 8),
+    [filteredOrders]);
 
   const fmt = (n: number) => `$${n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   const fmtIqd = (n: number) => `${(n * DEFAULT_FX).toLocaleString(undefined, { maximumFractionDigits: 0 })} IQD`;
@@ -121,6 +146,12 @@ export default function Dashboard() {
           </h1>
           <p className="erp-page-subtitle">Financial overview — All amounts in USD</p>
         </div>
+      </div>
+
+      <div className="erp-metric-card flex items-end gap-4 flex-wrap">
+        <div><Label className="text-xs">From Date</Label><Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-44" /></div>
+        <div><Label className="text-xs">To Date</Label><Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-44" /></div>
+        <Button size="sm">Apply Filter</Button>
       </div>
 
       {/* Row 1 — Revenue & Profit */}
@@ -245,7 +276,7 @@ export default function Dashboard() {
       <div className="erp-metric-card">
         <h3 className="text-sm font-semibold mb-4 flex items-center gap-2">
           <BarChart2 className="w-4 h-4 text-primary" />
-          Monthly Revenue vs Costs ({new Date().getFullYear()})
+          Revenue vs Costs by Month
         </h3>
         <div className="h-56">
           <ResponsiveContainer width="100%" height="100%">
