@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { nextDocNumber } from '@/lib/docNumbers';
 
 const countryCityMap: Record<string, string[]> = {
   'Iraq': ['Baghdad', 'Basra', 'Erbil', 'Sulaymaniyah', 'Mosul', 'Najaf', 'Karbala', 'Kirkuk', 'Duhok', 'Umm Qasr'],
@@ -70,22 +71,22 @@ export default function OrdersPage() {
 
   const setField = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }));
 
-  const generateOrderNo = () => {
-    const year = new Date().getFullYear();
-    const nextNum = orders.length + 1;
-    return `ORD-${year}-${String(nextNum).padStart(4, '0')}`;
-  };
-
   const handleCreate = async () => {
     if (!form.customer_id || !form.origin_country || !form.destination_country || !form.responsible_employee_id) return;
-    const orderNo = generateOrderNo();
-    const result = await insertMut.mutateAsync({
-      order_no: orderNo,
-      ...form,
-      status_step: 1,
-    });
-    setDialogOpen(false);
-    if (result?.id) navigate(`/orders/${result.id}`);
+    try {
+      // nextDocNumber calls the Postgres generate_doc_number() function which uses
+      // an advisory lock + persistent counter — safe under concurrent use and after deletions.
+      const orderNo = await nextDocNumber('ORD');
+      const result = await insertMut.mutateAsync({
+        order_no: orderNo,
+        ...form,
+        status_step: 1,
+      });
+      setDialogOpen(false);
+      if (result?.id) navigate(`/orders/${result.id}`);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to create order');
+    }
   };
 
   const handleDeleteOrder = async () => {
